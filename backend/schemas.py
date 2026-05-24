@@ -54,7 +54,24 @@ class ProductListOut(BaseModel):
     products: List[ProductOut]
 
 
-# ── Admin bulk import ──────────────────────────────────────────────────────────
+# ── Admin bulk import — categories ────────────────────────────────────────────
+
+class CategoryBulkItem(BaseModel):
+    dolibarr_id: int
+    name_ru: str
+    name_uz: Optional[str] = None
+    icon: Optional[str] = None
+
+
+class BulkCategoriesIn(BaseModel):
+    categories: List[CategoryBulkItem]
+
+
+class BulkCategoriesOut(BaseModel):
+    upserted: int
+
+
+# ── Admin bulk import — products ───────────────────────────────────────────────
 
 class ProductBulkItem(BaseModel):
     dolibarr_id: int

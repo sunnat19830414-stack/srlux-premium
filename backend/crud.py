@@ -104,6 +104,36 @@ async def _unique_slug(db: AsyncSession, model, slug: str) -> str:
         n += 1
 
 
+# ── Bulk upsert categories ────────────────────────────────────────────────────
+
+async def bulk_upsert_categories(db: AsyncSession, items: list) -> dict:
+    upserted = 0
+    for item in items:
+        existing = await db.scalar(
+            select(Category).where(Category.dolibarr_id == item.dolibarr_id)
+        )
+        if existing:
+            existing.name_ru = item.name_ru
+            if item.name_uz:
+                existing.name_uz = item.name_uz
+            if item.icon:
+                existing.icon = item.icon
+        else:
+            slug = _slugify(item.name_ru or "category")
+            slug = await _unique_slug(db, Category, slug)
+            cat = Category(
+                slug=slug,
+                name_ru=item.name_ru,
+                name_uz=item.name_uz or item.name_ru,
+                dolibarr_id=item.dolibarr_id,
+                icon=item.icon or "Package",
+            )
+            db.add(cat)
+        upserted += 1
+    await db.commit()
+    return {"upserted": upserted}
+
+
 # ── Bulk upsert (admin import) ─────────────────────────────────────────────────
 
 async def bulk_upsert_products(db: AsyncSession, items: list) -> dict:

@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import crud
 from database import get_db
-from schemas import BulkImportIn, BulkImportOut
+from schemas import BulkCategoriesIn, BulkCategoriesOut, BulkImportIn, BulkImportOut
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -15,6 +15,19 @@ ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "srlux_admin_secret_key")
 def _require_api_key(x_api_key: str = Header(...)):
     if x_api_key != ADMIN_API_KEY:
         raise HTTPException(status_code=403, detail="Недействительный API-ключ")
+
+
+@router.post(
+    "/categories/bulk",
+    response_model=BulkCategoriesOut,
+    dependencies=[Depends(_require_api_key)],
+)
+async def bulk_import_categories(
+    data: BulkCategoriesIn,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await crud.bulk_upsert_categories(db, data.categories)
+    return BulkCategoriesOut(**result)
 
 
 @router.post(

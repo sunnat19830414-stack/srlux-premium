@@ -88,32 +88,69 @@ def fetch_categories() -> dict:
     return {}
 
 
-def fetch_product_categories(categories_map: dict) -> dict:
+def fetch_product_categories(products: list) -> dict:
     """
-    Строит обратный маппинг {product_dolibarr_id: category_dolibarr_id}.
-    Для каждой категории запрашивает список её товаров через
-    GET /categories/{id}/objects/product.
+    Строит маппинг {product_dolibarr_id: category_dolibarr_id}.
+    Для каждого товара запрашивает GET /categories?type=product&object_id={pid}.
     """
     product_to_cat: dict = {}
-    for cat_id in categories_map:
+    total = len(products)
+    for i, p in enumerate(products):
+        pid = int(p.get("id", 0)) if p.get("id") else 0
+        if not pid:
+            continue
         try:
             resp = requests.get(
-                f"{DOLIBARR_URL}/categories/{cat_id}/objects/product",
+                f"{DOLIBARR_URL}/categories",
                 headers=DOLIBARR_HEADERS,
-                params={"limit": 500},
-                timeout=15,
+                params={"type": "product", "object_id": pid, "limit": 1},
+                timeout=10,
             )
             if resp.status_code == 200:
-                products_in_cat = resp.json()
-                if isinstance(products_in_cat, list):
-                    for prod in products_in_cat:
-                        pid = int(prod["id"]) if prod.get("id") else 0
-                        if pid and pid not in product_to_cat:
-                            product_to_cat[pid] = cat_id
+                cats = resp.json()
+                if isinstance(cats, list) and cats:
+                    cid = int(cats[0]["id"]) if cats[0].get("id") else 0
+                    if cid:
+                        product_to_cat[pid] = cid
         except Exception as e:
-            logger.warning(f"Не удалось загрузить товары категории {cat_id}: {e}")
-    logger.info(f"Маппинг товар→категория: {len(product_to_cat)} записей")
+            logger.debug(f"Категория для товара {pid}: {e}")
+        if (i + 1) % 50 == 0:
+            logger.info(f"  Загрузка категорий товаров: {i + 1}/{total}...")
+
+    logger.info(f"Маппинг товар→категория: {len(product_to_cat)} из {total} товаров")
     return product_to_cat
+
+
+def sync_categories_to_backend(categories_map: dict) -> None:
+    """Создаёт/обновляет все категории Dolibarr в базе данных SR Lux."""
+    if not categories_map:
+        return
+
+    cats = []
+    for dolibarr_id, cat_data in categories_map.items():
+        name_ru = str(cat_data.get("label") or "Категория").strip()
+        if name_ru:
+            cats.append({
+                "dolibarr_id": dolibarr_id,
+                "name_ru": name_ru,
+                "name_uz": None,
+                "icon": None,
+            })
+
+    try:
+        resp = requests.post(
+            f"{BACKEND_URL}/api/admin/categories/bulk",
+            json={"categories": cats},
+            headers={"X-Api-Key": ADMIN_API_KEY, "Content-Type": "application/json"},
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            result = resp.json()
+            logger.info(f"✅ Категории синхронизированы: upserted={result['upserted']}")
+        else:
+            logger.error(f"Ошибка синхронизации категорий: {resp.status_code} — {resp.text[:200]}")
+    except Exception as e:
+        logger.error(f"Не удалось синхронизировать категории: {e}")
 
 
 def get_usd_rate() -> Decimal:
@@ -156,6 +193,10 @@ def build_payload(
     payload = []
     skipped = 0
 
+    # Log first product keys once for debugging
+    if raw_products:
+        logger.debug(f"Поля первого товара: {list(raw_products[0].keys())}")
+
     for p in raw_products:
         try:
             dolibarr_id = int(p.get("id", 0))
@@ -181,7 +222,7 @@ def build_payload(
 
             description_ru = str(p.get("description") or "").strip() or None
 
-            # Категория: сначала из поля товара, потом из маппинга category→products
+            # Категория: сначала из поля товара, потом из маппинга product→category
             cat_dolibarr_id = None
             cat_name_ru = None
 
@@ -194,7 +235,7 @@ def build_payload(
                     cat_dolibarr_id = first_cat_id
                     cat_name_ru = str(categories_map[first_cat_id].get("label") or "Прочее")
 
-            # Fallback: обратный маппинг из fetch_product_categories()
+            # Fallback: маппинг из fetch_product_categories()
             if cat_dolibarr_id is None and dolibarr_id in product_to_cat:
                 fallback_id = product_to_cat[dolibarr_id]
                 if fallback_id in categories_map:
@@ -262,11 +303,12 @@ def main():
     usd_rate = get_usd_rate()
     logger.info(f"Курс USD/UZS: {usd_rate}")
 
+    # 1. Синхронизируем категории — они должны быть в DB до товаров
     categories_map = fetch_categories()
-    logger.info(f"Загружено категорий: {len(categories_map)}")
+    logger.info(f"Загружено категорий из Dolibarr: {len(categories_map)}")
+    sync_categories_to_backend(categories_map)
 
-    product_to_cat = fetch_product_categories(categories_map)
-
+    # 2. Загружаем все товары
     raw_products = fetch_all_products()
     logger.info(f"Итого товаров из Dolibarr: {len(raw_products)}")
 
@@ -274,6 +316,10 @@ def main():
         logger.warning("Dolibarr вернул 0 товаров. Прерываем синхронизацию.")
         return
 
+    # 3. Строим маппинг товар→категория (per-product API lookup)
+    product_to_cat = fetch_product_categories(raw_products)
+
+    # 4. Импортируем товары
     payload = build_payload(raw_products, categories_map, product_to_cat, usd_rate)
     send_to_backend(payload)
 
