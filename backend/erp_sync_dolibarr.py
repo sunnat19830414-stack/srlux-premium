@@ -121,6 +121,21 @@ def fetch_product_categories(products: list) -> dict:
     return product_to_cat
 
 
+def wait_for_backend(max_attempts: int = 15, delay: float = 3.0) -> bool:
+    """Ждёт пока бэкенд API не ответит на /health."""
+    import time
+    for i in range(max_attempts):
+        try:
+            resp = requests.get(f"{BACKEND_URL}/health", timeout=5)
+            if resp.status_code == 200:
+                return True
+        except Exception:
+            pass
+        logger.info(f"Ожидание бэкенда... ({i + 1}/{max_attempts})")
+        time.sleep(delay)
+    return False
+
+
 def sync_categories_to_backend(categories_map: dict) -> None:
     """Создаёт/обновляет все категории Dolibarr в базе данных SR Lux."""
     if not categories_map:
@@ -299,6 +314,10 @@ def send_to_backend(payload: list) -> None:
 def main():
     logger.info("=== Запуск синхронизации SR Lux ↔ Dolibarr ===")
     logger.info(f"Валюта Dolibarr: {DOLIBARR_DEFAULT_CURRENCY}")
+
+    if not wait_for_backend():
+        logger.error("Бэкенд недоступен. Прерываем синхронизацию.")
+        sys.exit(1)
 
     usd_rate = get_usd_rate()
     logger.info(f"Курс USD/UZS: {usd_rate}")
