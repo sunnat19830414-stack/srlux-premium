@@ -8,7 +8,8 @@ import { fetchCategories, fetchProducts } from '../api/client'
 import ProductCard from '../components/ProductCard'
 import { useLocale } from '../contexts/LocaleContext'
 
-const ICON_MAP: Record<string, React.ComponentType<{ size?: number | string; className?: string }>> = {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ICON_MAP: Record<string, React.ComponentType<any>> = {
   Flame, Thermometer, Wrench, Wind, Droplets,
   Zap, Settings, Package, Layers,
 }
