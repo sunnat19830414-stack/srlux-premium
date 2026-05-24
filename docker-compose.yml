@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: srlux-postgres
+    environment:
+      POSTGRES_DB: srlux_premium
+      POSTGRES_USER: srlux
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-srlux_secure_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U srlux"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - srlux_network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: srlux-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - srlux_network
+
+  # FastAPI Backend
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: srlux-api
+    environment:
+      DOLIBARR_API_URL: ${DOLIBARR_API_URL:-https://bollente.uz/api/index.php/}
+      DOLIBARR_API_KEY: ${DOLIBARR_API_KEY:-77759613d55e2ae88e3db1202e53f860f2b9a93a}
+      DATABASE_URL: postgresql://srlux:${DB_PASSWORD:-srlux_secure_password}@postgres:5432/srlux_premium
+      REDIS_URL: redis://redis:6379
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - srlux_network
+
+  # React Frontend
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: srlux-web
+    ports:
+      - "80:3000"
+      - "443:443"
+    depends_on:
+      - api
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    networks:
+      - srlux_network
+
+volumes:
+  postgres_data:
+
+networks:
+  srlux_network:
+    driver: bridge
