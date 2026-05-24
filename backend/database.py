@@ -4,7 +4,7 @@ from sqlalchemy.orm import DeclarativeBase
 
 _raw_url = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://srlux:srlux_secure_password@localhost:5432/srlux_premium",
+    "postgresql+asyncpg://srlux:changeme@localhost:5432/srlux_premium",
 )
 # Support both postgresql:// and postgresql+asyncpg://
 DATABASE_URL = _raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)

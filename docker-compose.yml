@@ -9,7 +9,7 @@ services:
     environment:
       POSTGRES_DB: srlux_premium
       POSTGRES_USER: srlux
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-srlux_secure_password}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -41,11 +41,11 @@ services:
     container_name: srlux-api
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://srlux:${DB_PASSWORD:-srlux_secure_password}@postgres:5432/srlux_premium
+      DATABASE_URL: postgresql+asyncpg://srlux:${DB_PASSWORD}@postgres:5432/srlux_premium
       REDIS_URL: redis://redis:6379
       DOLIBARR_API_URL: ${DOLIBARR_API_URL:-https://bollente.uz/api/index.php/}
-      DOLIBARR_API_KEY: ${DOLIBARR_API_KEY:-77759613d55e2ae88e3db1202e53f860f2b9a93a}
-      ADMIN_API_KEY: ${ADMIN_API_KEY:-srlux_admin_secret_key_change_me}
+      DOLIBARR_API_KEY: ${DOLIBARR_API_KEY:?DOLIBARR_API_KEY is required}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?ADMIN_API_KEY is required}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       USD_TO_UZS_RATE: ${USD_TO_UZS_RATE:-12650}
