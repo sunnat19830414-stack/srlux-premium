@@ -19,9 +19,12 @@ logging.basicConfig(
 logger = logging.getLogger("erp_sync")
 
 DOLIBARR_URL = os.getenv("DOLIBARR_API_URL", "https://bollente.uz/api/index.php/").rstrip("/")
-DOLIBARR_KEY = os.getenv("DOLIBARR_API_KEY", "77759613d55e2ae88e3db1202e53f860f2b9a93a")
+DOLIBARR_KEY = os.getenv("DOLIBARR_API_KEY", "")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://api:8000")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "srlux_admin_secret_key")
+
+# Dolibarr prices are in USD — always convert to UZS
+DOLIBARR_DEFAULT_CURRENCY = os.getenv("DOLIBARR_DEFAULT_CURRENCY", "USD")
 
 # Базовый курс конвертации USD → UZS
 USD_TO_UZS = Decimal(os.getenv("USD_TO_UZS_RATE", "12650"))
@@ -85,6 +88,34 @@ def fetch_categories() -> dict:
     return {}
 
 
+def fetch_product_categories(categories_map: dict) -> dict:
+    """
+    Строит обратный маппинг {product_dolibarr_id: category_dolibarr_id}.
+    Для каждой категории запрашивает список её товаров через
+    GET /categories/{id}/objects/product.
+    """
+    product_to_cat: dict = {}
+    for cat_id in categories_map:
+        try:
+            resp = requests.get(
+                f"{DOLIBARR_URL}/categories/{cat_id}/objects/product",
+                headers=DOLIBARR_HEADERS,
+                params={"limit": 500},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                products_in_cat = resp.json()
+                if isinstance(products_in_cat, list):
+                    for prod in products_in_cat:
+                        pid = int(prod["id"]) if prod.get("id") else 0
+                        if pid and pid not in product_to_cat:
+                            product_to_cat[pid] = cat_id
+        except Exception as e:
+            logger.warning(f"Не удалось загрузить товары категории {cat_id}: {e}")
+    logger.info(f"Маппинг товар→категория: {len(product_to_cat)} записей")
+    return product_to_cat
+
+
 def get_usd_rate() -> Decimal:
     """Пытается получить актуальный курс из бэкенда, fallback — константа."""
     try:
@@ -115,7 +146,12 @@ def convert_price(raw_price, currency: str, usd_rate: Decimal) -> Decimal:
     return price.quantize(Decimal("1"))
 
 
-def build_payload(raw_products: list, categories_map: dict, usd_rate: Decimal) -> list:
+def build_payload(
+    raw_products: list,
+    categories_map: dict,
+    product_to_cat: dict,
+    usd_rate: Decimal,
+) -> list:
     """Превращает ответ Dolibarr в список для bulk-import."""
     payload = []
     skipped = 0
@@ -130,10 +166,9 @@ def build_payload(raw_products: list, categories_map: dict, usd_rate: Decimal) -
                 skipped += 1
                 continue
 
-            # Реальная цена из ERP
+            # Цена: Dolibarr хранит товары в USD — всегда конвертируем в UZS
             raw_price = p.get("price_ttc") or p.get("price") or 0
-            currency = p.get("multicurrency_code") or p.get("price_base_type") or "UZS"
-            price_uzs = convert_price(raw_price, currency, usd_rate)
+            price_uzs = convert_price(raw_price, DOLIBARR_DEFAULT_CURRENCY, usd_rate)
 
             if price_uzs <= 0:
                 skipped += 1
@@ -146,15 +181,25 @@ def build_payload(raw_products: list, categories_map: dict, usd_rate: Decimal) -
 
             description_ru = str(p.get("description") or "").strip() or None
 
-            # Категория
+            # Категория: сначала из поля товара, потом из маппинга category→products
             cat_dolibarr_id = None
             cat_name_ru = None
+
             cat_ids = p.get("category_ids") or p.get("categories") or []
+            if isinstance(cat_ids, (str, int)):
+                cat_ids = [cat_ids]
             if isinstance(cat_ids, list) and cat_ids:
-                first_cat_id = int(cat_ids[0]) if cat_ids else None
-                if first_cat_id and first_cat_id in categories_map:
+                first_cat_id = int(cat_ids[0])
+                if first_cat_id in categories_map:
                     cat_dolibarr_id = first_cat_id
                     cat_name_ru = str(categories_map[first_cat_id].get("label") or "Прочее")
+
+            # Fallback: обратный маппинг из fetch_product_categories()
+            if cat_dolibarr_id is None and dolibarr_id in product_to_cat:
+                fallback_id = product_to_cat[dolibarr_id]
+                if fallback_id in categories_map:
+                    cat_dolibarr_id = fallback_id
+                    cat_name_ru = str(categories_map[fallback_id].get("label") or "Прочее")
 
             # Фото
             image_url = None
@@ -212,12 +257,15 @@ def send_to_backend(payload: list) -> None:
 
 def main():
     logger.info("=== Запуск синхронизации SR Lux ↔ Dolibarr ===")
+    logger.info(f"Валюта Dolibarr: {DOLIBARR_DEFAULT_CURRENCY}")
 
     usd_rate = get_usd_rate()
     logger.info(f"Курс USD/UZS: {usd_rate}")
 
     categories_map = fetch_categories()
     logger.info(f"Загружено категорий: {len(categories_map)}")
+
+    product_to_cat = fetch_product_categories(categories_map)
 
     raw_products = fetch_all_products()
     logger.info(f"Итого товаров из Dolibarr: {len(raw_products)}")
@@ -226,7 +274,7 @@ def main():
         logger.warning("Dolibarr вернул 0 товаров. Прерываем синхронизацию.")
         return
 
-    payload = build_payload(raw_products, categories_map, usd_rate)
+    payload = build_payload(raw_products, categories_map, product_to_cat, usd_rate)
     send_to_backend(payload)
 
     logger.info("=== Синхронизация завершена ===")
