@@ -8,7 +8,7 @@ import { fetchCategories, fetchProducts } from '../api/client'
 import ProductCard from '../components/ProductCard'
 import { useLocale } from '../contexts/LocaleContext'
 
-const ICON_MAP: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
+const ICON_MAP: Record<string, React.ComponentType<{ size?: number | string; className?: string }>> = {
   Flame, Thermometer, Wrench, Wind, Droplets,
   Zap, Settings, Package, Layers,
 }
@@ -72,7 +72,6 @@ export default function CatalogPage({ onCartChange, cartItems }: Props) {
   }
 
   const addToCart = (product: Product, variant: Variant | null, qty: number) => {
-    const key = `${product.id}-${variant?.id ?? 'base'}`
     const existing = cartItems.findIndex(
       (i) => i.id === product.id && (i.variant?.id ?? 'base') === (variant?.id ?? 'base'),
     )
