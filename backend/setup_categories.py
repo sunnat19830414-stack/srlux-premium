@@ -28,6 +28,8 @@ CUSTOM_CATEGORIES = [
     {"dolibarr_id": -5, "slug": "filtry",               "name_ru": "Фильтры",             "name_uz": "Filtrlar",              "icon": "Settings"},
     {"dolibarr_id": -6, "slug": "zapornaya-armatura",   "name_ru": "Запорная арматура",   "name_uz": "To'siq armatura",       "icon": "Wrench"},
     {"dolibarr_id": -7, "slug": "push-fitingi",          "name_ru": "Push фитинги",        "name_uz": "Push fitinglar",        "icon": "Zap"},
+    {"dolibarr_id": -8, "slug": "fankoily",              "name_ru": "Фанкойлы",            "name_uz": "Fankoyllar",            "icon": "Wind"},
+    {"dolibarr_id": -9, "slug": "aksessuary",            "name_ru": "Аксессуары",          "name_uz": "Aksessuarlar",          "icon": "Layers"},
 ]
 
 
@@ -68,10 +70,23 @@ def detect_category(sku: str, name: str) -> int | None:
     if "кран" in n or s.startswith("84818"):
         return -6
 
-    # Трубы и фитинги PPR
+    # Push фитинги PPR
     fitting_words = ("муфта", "тройник", "угол", "заглушка", "разделитель")
     if any(w in n for w in fitting_words):
         return -7
+
+    # Фанкойлы
+    if s.startswith(("FP-", "YG-")) or "фанкойл" in n:
+        return -8
+
+    # Аксессуары (ножки, крепления, хабы, датчики, розетки)
+    accessories = ("support feet", "gz4", "беспроводной", "wireless", "датчик", "розетка")
+    if any(w in n for w in accessories) or s.startswith("GZ4") or s.startswith("Wireless") or s.startswith("M3380") or s.startswith("Size:"):
+        return -9
+
+    # Стальные панельные и декоративные радиаторы → Трубчатые радиаторы
+    if "стальной панел" in n or "радиатор стальной" in n or s.startswith("JDC") or s.startswith("NCR"):
+        return -2
 
     return None
 
