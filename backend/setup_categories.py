@@ -27,7 +27,7 @@ CUSTOM_CATEGORIES = [
     {"dolibarr_id": -4, "slug": "termostaty",           "name_ru": "Термостаты",          "name_uz": "Termostatlar",          "icon": "Thermometer"},
     {"dolibarr_id": -5, "slug": "filtry",               "name_ru": "Фильтры",             "name_uz": "Filtrlar",              "icon": "Settings"},
     {"dolibarr_id": -6, "slug": "zapornaya-armatura",   "name_ru": "Запорная арматура",   "name_uz": "To'siq armatura",       "icon": "Wrench"},
-    {"dolibarr_id": -7, "slug": "truby-i-fitingi",      "name_ru": "Трубы и фитинги",     "name_uz": "Quvurlar va fitinglar", "icon": "Zap"},
+    {"dolibarr_id": -7, "slug": "push-fitingi",          "name_ru": "Push фитинги",        "name_uz": "Push fitinglar",        "icon": "Zap"},
 ]
 
 
