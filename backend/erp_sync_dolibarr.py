@@ -257,11 +257,9 @@ def build_payload(
                     cat_dolibarr_id = fallback_id
                     cat_name_ru = str(categories_map[fallback_id].get("label") or "Прочее")
 
-            # Фото
+            # Фото: не импортируем из Dolibarr — там могут быть чужие изображения.
+            # Фронтенд покажет нейтральную иконку для товаров без фото.
             image_url = None
-            photos = p.get("photos") or []
-            if isinstance(photos, list) and photos:
-                image_url = photos[0].get("photo_url") or photos[0].get("url")
 
             payload.append({
                 "dolibarr_id": dolibarr_id,
