@@ -60,7 +60,19 @@ async def get_product_by_slug(db: AsyncSession, slug: str):
 # ── Categories ─────────────────────────────────────────────────────────────────
 
 async def get_categories(db: AsyncSession):
-    result = await db.execute(select(Category).order_by(Category.name_ru))
+    # Only categories that have at least one active product
+    stmt = (
+        select(Category)
+        .where(
+            Category.id.in_(
+                select(Product.category_id)
+                .where(Product.is_active == True, Product.category_id.isnot(None))
+                .distinct()
+            )
+        )
+        .order_by(Category.name_ru)
+    )
+    result = await db.execute(stmt)
     return result.scalars().all()
 
 
@@ -175,7 +187,8 @@ async def bulk_upsert_products(db: AsyncSession, items: list) -> dict:
             existing.weight = item.weight
             existing.image_url = item.image_url
             existing.is_active = item.is_active
-            if category_id:
+            # Preserve manually set categories (negative dolibarr_id = custom)
+            if category_id and existing.category_id is None:
                 existing.category_id = category_id
         else:
             slug = _slugify(item.name_ru)

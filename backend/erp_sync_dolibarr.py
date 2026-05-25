@@ -335,11 +335,8 @@ def main():
         logger.warning("Dolibarr вернул 0 товаров. Прерываем синхронизацию.")
         return
 
-    # 3. Строим маппинг товар→категория (per-product API lookup)
-    product_to_cat = fetch_product_categories(raw_products)
-
-    # 4. Импортируем товары
-    payload = build_payload(raw_products, categories_map, product_to_cat, usd_rate)
+    # 3. Импортируем товары (категории управляются через setup_categories.py)
+    payload = build_payload(raw_products, categories_map, {}, usd_rate)
     send_to_backend(payload)
 
     logger.info("=== Синхронизация завершена ===")
