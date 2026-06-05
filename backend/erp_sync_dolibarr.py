@@ -198,15 +198,44 @@ def convert_price(raw_price, currency: str, usd_rate: Decimal) -> Decimal:
     return price.quantize(Decimal("1"))
 
 
+def build_parent_map(raw_products: list) -> dict:
+    """
+    Строит словарь {dolibarr_id: product_data} для родительских товаров.
+    Родительский товар — тот, у которого fk_product_parent пустой или 0.
+    """
+    parent_map = {}
+    for p in raw_products:
+        parent_id = p.get("fk_product_parent")
+        is_child = parent_id and str(parent_id) not in ("0", "", "null", "None")
+        if not is_child:
+            pid = int(p.get("id", 0))
+            if pid:
+                parent_map[pid] = p
+    logger.info(f"Родительских товаров (модели): {len(parent_map)}, дочерних: {len(raw_products) - len(parent_map)}")
+    return parent_map
+
+
+def _get_photos(p: dict) -> str | None:
+    """Извлекает первый URL фото из поля photos товара."""
+    photos = p.get("photos") or []
+    if isinstance(photos, list) and photos:
+        return photos[0].get("photo_url") or photos[0].get("url")
+    return None
+
+
 def build_payload(
     raw_products: list,
     categories_map: dict,
     product_to_cat: dict,
     usd_rate: Decimal,
+    parent_map: dict | None = None,
 ) -> list:
     """Превращает ответ Dolibarr в список для bulk-import."""
     payload = []
     skipped = 0
+    parent_map = parent_map or {}
+    inherited_photo = 0
+    inherited_desc = 0
 
     # Log first product keys once for debugging
     if raw_products:
@@ -237,6 +266,30 @@ def build_payload(
 
             description_ru = str(p.get("description") or "").strip() or None
 
+            # Определяем родителя для этого товара
+            fk_parent_raw = p.get("fk_product_parent")
+            fk_parent = None
+            if fk_parent_raw and str(fk_parent_raw) not in ("0", "", "null", "None"):
+                try:
+                    fk_parent = int(fk_parent_raw)
+                except (ValueError, TypeError):
+                    pass
+
+            parent = parent_map.get(fk_parent) if fk_parent else None
+
+            # Фото: сначала своё, fallback — с родителя
+            image_url = _get_photos(p)
+            if not image_url and parent:
+                image_url = _get_photos(parent)
+                if image_url:
+                    inherited_photo += 1
+
+            # Описание: сначала своё, fallback — с родителя
+            if not description_ru and parent:
+                description_ru = str(parent.get("description") or "").strip() or None
+                if description_ru:
+                    inherited_desc += 1
+
             # Категория: сначала из поля товара, потом из маппинга product→category
             cat_dolibarr_id = None
             cat_name_ru = None
@@ -256,12 +309,6 @@ def build_payload(
                 if fallback_id in categories_map:
                     cat_dolibarr_id = fallback_id
                     cat_name_ru = str(categories_map[fallback_id].get("label") or "Прочее")
-
-            # Фото из Dolibarr
-            image_url = None
-            photos = p.get("photos") or []
-            if isinstance(photos, list) and photos:
-                image_url = photos[0].get("photo_url") or photos[0].get("url")
 
             payload.append({
                 "dolibarr_id": dolibarr_id,
@@ -283,7 +330,10 @@ def build_payload(
             logger.warning(f"Ошибка обработки товара {p.get('id')}: {e}")
             skipped += 1
 
-    logger.info(f"Подготовлено к импорту: {len(payload)}, пропущено: {skipped}")
+    logger.info(
+        f"Подготовлено к импорту: {len(payload)}, пропущено: {skipped} | "
+        f"Фото унаследовано от родителя: {inherited_photo}, описание: {inherited_desc}"
+    )
     return payload
 
 
@@ -335,8 +385,11 @@ def main():
         logger.warning("Dolibarr вернул 0 товаров. Прерываем синхронизацию.")
         return
 
-    # 3. Импортируем товары (категории управляются через setup_categories.py)
-    payload = build_payload(raw_products, categories_map, {}, usd_rate)
+    # 3. Строим карту родительских товаров для fallback фото/описания
+    parent_map = build_parent_map(raw_products)
+
+    # 4. Импортируем товары (категории управляются через setup_categories.py)
+    payload = build_payload(raw_products, categories_map, {}, usd_rate, parent_map)
     send_to_backend(payload)
 
     logger.info("=== Синхронизация завершена ===")
