@@ -217,10 +217,60 @@ def build_parent_map(raw_products: list) -> dict:
 
 def _get_photos(p: dict) -> str | None:
     """Извлекает первый URL фото из поля photos товара."""
-    photos = p.get("photos") or []
-    if isinstance(photos, list) and photos:
-        return photos[0].get("photo_url") or photos[0].get("url")
+    # Пробуем разные поля — разные версии Dolibarr используют разные имена
+    for field in ("photos", "photo", "images"):
+        photos = p.get(field) or []
+        if isinstance(photos, list) and photos:
+            item = photos[0]
+            url = item.get("photo_url") or item.get("url") or item.get("src")
+            if url:
+                return url
+        elif isinstance(photos, str) and photos:
+            return photos
     return None
+
+
+DOLIBARR_BASE_URL = DOLIBARR_URL.replace("/api/index.php", "").rstrip("/")
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+
+# Кэш: product_id -> image_url (чтобы не дёргать API дважды)
+_photo_cache: dict[int, str | None] = {}
+
+
+def fetch_document_photo(product_id: int, product_ref: str) -> str | None:
+    """
+    Получает URL первого изображения из вкладки 'Связанные файлы' продукта.
+    Использует GET /documents?modulepart=product&id={id}.
+    """
+    if product_id in _photo_cache:
+        return _photo_cache[product_id]
+
+    url = None
+    try:
+        resp = requests.get(
+            f"{DOLIBARR_URL}/documents",
+            headers=DOLIBARR_HEADERS,
+            params={"modulepart": "product", "id": product_id},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            docs = resp.json()
+            if isinstance(docs, list):
+                for doc in docs:
+                    name = str(doc.get("name") or "").lower()
+                    if any(name.endswith(ext) for ext in IMAGE_EXTENSIONS):
+                        relative = doc.get("relativename") or doc.get("name")
+                        if relative:
+                            url = (
+                                f"{DOLIBARR_BASE_URL}/viewimage.php"
+                                f"?modulepart=product&file={relative}&cache=1"
+                            )
+                            break
+    except Exception as e:
+        logger.debug(f"Документы для товара {product_id}: {e}")
+
+    _photo_cache[product_id] = url
+    return url
 
 
 def build_payload(
@@ -239,7 +289,8 @@ def build_payload(
 
     # Log first product keys once for debugging
     if raw_products:
-        logger.debug(f"Поля первого товара: {list(raw_products[0].keys())}")
+        logger.info(f"Поля первого товара: {list(raw_products[0].keys())}")
+        logger.info(f"photos/photo поля: photos={raw_products[0].get('photos')}, photo={raw_products[0].get('photo')}")
 
     for p in raw_products:
         try:
@@ -277,10 +328,14 @@ def build_payload(
 
             parent = parent_map.get(fk_parent) if fk_parent else None
 
-            # Фото: сначала своё, fallback — с родителя
+            # Фото: сначала своё поле, потом документы Dolibarr, потом с родителя
             image_url = _get_photos(p)
+            if not image_url:
+                image_url = fetch_document_photo(dolibarr_id, sku)
             if not image_url and parent:
-                image_url = _get_photos(parent)
+                parent_pid = int(parent.get("id", 0))
+                parent_ref = str(parent.get("ref") or "")
+                image_url = _get_photos(parent) or fetch_document_photo(parent_pid, parent_ref)
                 if image_url:
                     inherited_photo += 1
 
