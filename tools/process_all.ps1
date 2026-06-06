@@ -1,28 +1,16 @@
-# ─────────────────────────────────────────────────────────────────
-# process_all.ps1 — Пакетная обработка фото для всех моделей srlux.uz
-#
-# Запуск из PowerShell:
+# process_all.ps1 - Batch photo processing for srlux.uz
+# Run from PowerShell:
 #   cd C:\srlux_photos
-#   .\process_all.ps1
-#
-# Требования:
-#   pip install Pillow anthropic numpy
 #   $env:ANTHROPIC_API_KEY = "sk-ant-..."
-# ─────────────────────────────────────────────────────────────────
+#   .\process_all.ps1
 
-# ── Настройки ─────────────────────────────────────────────────────
-$ScriptDir   = "C:\srlux_photos"          # Папка с исходными / готовые
-$ProcessorPath = "C:\srlux_photos\smart_photo_processor.py"  # Скрипт
+$ScriptDir     = "C:\srlux_photos"
+$ProcessorPath = "C:\srlux_photos\smart_photo_processor.py"
 
-# Проверяем API ключ
 if (-not $env:ANTHROPIC_API_KEY) {
-    $key = Read-Host "Введите ANTHROPIC_API_KEY"
+    $key = Read-Host "Enter ANTHROPIC_API_KEY"
     $env:ANTHROPIC_API_KEY = $key
 }
-
-# ── Модели для обработки ──────────────────────────────────────────
-# Формат: SKU = "список цветов"
-# Уберите # в начале строки чтобы включить модель
 
 $Models = [ordered]@{
     "3015"     = "white,anthracite,black"
@@ -37,46 +25,51 @@ $Models = [ordered]@{
     "JDC22"    = "white,anthracite,black"
 }
 
-# ── Запуск ────────────────────────────────────────────────────────
-$Total   = $Models.Count
-$Done    = 0
-$Errors  = @()
+$Total  = $Models.Count
+$Done   = 0
+$Errors = @()
 
 Write-Host ""
 Write-Host "=========================================" -ForegroundColor Cyan
-Write-Host "  srlux.uz — пакетная обработка фото" -ForegroundColor Cyan
-Write-Host "  Моделей: $Total" -ForegroundColor Cyan
+Write-Host "  srlux.uz - batch photo processing" -ForegroundColor Cyan
+Write-Host "  Models: $Total" -ForegroundColor Cyan
 Write-Host "=========================================" -ForegroundColor Cyan
 Write-Host ""
 
 foreach ($SKU in $Models.Keys) {
-    $Colors  = $Models[$SKU]
-    $Input   = "$ScriptDir\исходные\$SKU"
-    $Output  = "$ScriptDir\готовые\$SKU"
+    $Colors = $Models[$SKU]
+    $Input  = "$ScriptDir\ishodnye\$SKU"
+    $Output = "$ScriptDir\gotovye\$SKU"
 
-    Write-Host "─────────────────────────────────────────" -ForegroundColor DarkGray
-    Write-Host "[$($Done+1)/$Total] Модель: $SKU | Цвета: $Colors" -ForegroundColor Yellow
-    Write-Host "  Источник : $Input"
-    Write-Host "  Результат: $Output"
+    # Try Russian folder names as well
+    $InputRu = "$ScriptDir\исходные\$SKU"
+    $OutputRu = "$ScriptDir\готовые\$SKU"
+
+    if (Test-Path $InputRu) {
+        $Input  = $InputRu
+        $Output = $OutputRu
+    }
+
+    Write-Host "-----------------------------------------" -ForegroundColor DarkGray
+    Write-Host "[$($Done+1)/$Total] SKU: $SKU | Colors: $Colors" -ForegroundColor Yellow
+    Write-Host "  Input : $Input"
+    Write-Host "  Output: $Output"
     Write-Host ""
 
-    # Проверяем что папка с исходниками существует
     if (-not (Test-Path $Input)) {
-        Write-Host "  ⚠️  Папка не найдена, пропускаю: $Input" -ForegroundColor DarkYellow
+        Write-Host "  [SKIP] Folder not found: $Input" -ForegroundColor DarkYellow
         $Done++
         continue
     }
 
-    # Считаем файлы в папке
-    $Files = Get-ChildItem $Input -File -Include "*.jpg","*.jpeg","*.png","*.webp","*.bmp"
+    $Files = Get-ChildItem $Input -File | Where-Object { $_.Extension -match '\.(jpg|jpeg|png|webp|bmp)$' }
     if ($Files.Count -eq 0) {
-        Write-Host "  ⚠️  Нет изображений в папке, пропускаю" -ForegroundColor DarkYellow
+        Write-Host "  [SKIP] No images in folder" -ForegroundColor DarkYellow
         $Done++
         continue
     }
-    Write-Host "  Файлов: $($Files.Count)" -ForegroundColor Green
+    Write-Host "  Files: $($Files.Count)" -ForegroundColor Green
 
-    # Запускаем обработчик
     $Start = Get-Date
     python $ProcessorPath --input $Input --output $Output --sku $SKU --colors $Colors
     $Exit = $LASTEXITCODE
@@ -84,10 +77,10 @@ foreach ($SKU in $Models.Keys) {
 
     if ($Exit -eq 0) {
         Write-Host ""
-        Write-Host "  Готово за ${Elapsed}с" -ForegroundColor Green
+        Write-Host "  [OK] Done in ${Elapsed}s" -ForegroundColor Green
     } else {
         Write-Host ""
-        Write-Host "  ОШИБКА (код $Exit)" -ForegroundColor Red
+        Write-Host "  [ERROR] Exit code: $Exit" -ForegroundColor Red
         $Errors += $SKU
     }
 
@@ -95,17 +88,13 @@ foreach ($SKU in $Models.Keys) {
     Write-Host ""
 }
 
-# ── Итог ──────────────────────────────────────────────────────────
 Write-Host "=========================================" -ForegroundColor Cyan
-Write-Host "  ИТОГ: обработано $($Done - $Errors.Count)/$Total моделей" -ForegroundColor Cyan
+Write-Host "  DONE: $($Done - $Errors.Count)/$Total models processed" -ForegroundColor Cyan
 if ($Errors.Count -gt 0) {
-    Write-Host "  Ошибки: $($Errors -join ', ')" -ForegroundColor Red
+    Write-Host "  Errors: $($Errors -join ', ')" -ForegroundColor Red
 }
 Write-Host "=========================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Следующий шаг:" -ForegroundColor White
-Write-Host "  1. Скопируйте папку готовые\ на сервер:" -ForegroundColor White
-Write-Host "     scp -r C:\srlux_photos\готовые\ root@srlux.uz:/var/www/srlux-premium/static/products/" -ForegroundColor Gray
-Write-Host "  2. Запустите SQL команды из вывода скрипта для обновления БД" -ForegroundColor White
+Write-Host "Next step - copy to server:" -ForegroundColor White
+Write-Host '  scp -r C:\srlux_photos\gotovye\ root@srlux.uz:/var/www/srlux-premium/static/products/' -ForegroundColor Gray
 Write-Host ""
-Read-Host "Нажмите Enter для выхода"
