@@ -281,7 +281,6 @@ export default function ModelPage({ onAddToCart }: Props) {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gold-700/20 bg-anthracite-800">
-                    <th className="text-left py-3 px-4 text-gray-500 font-normal">Арт.</th>
                     {model.sections_available.length > 0 && (
                       <th className="text-left py-3 px-4 text-gray-500 font-normal">Секций</th>
                     )}
@@ -307,7 +306,6 @@ export default function ModelPage({ onAddToCart }: Props) {
                           isSelected ? 'bg-gold/5' : 'hover:bg-anthracite-800'
                         }`}
                       >
-                        <td className="py-2.5 px-4 font-mono text-[11px] text-gray-400">{v.sku}</td>
                         {model.sections_available.length > 0 && (
                           <td className="py-2.5 px-4 text-gray-300">{v.sections ?? '—'}</td>
                         )}
