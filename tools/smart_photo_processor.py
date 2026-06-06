@@ -224,25 +224,39 @@ def generate_color_variant(img: Image.Image, color_rgb: tuple, bg_threshold: int
     Перекрашивает радиатор в заданный цвет, сохраняя белый фон.
 
     Алгоритм:
-      1. Определяем пиксели фона (все каналы > bg_threshold)
-      2. Для пикселей радиатора: яркость × (target_color / 255)
-      3. Фон остаётся белым (255, 255, 255)
+      1. Маска фона: пиксели где все каналы > bg_threshold
+      2. Нормализация яркости пикселей радиатора в диапазон 0–1
+         (работает с исходником ЛЮБОГО цвета: белый, антрацит, чёрный)
+      3. Применяем целевой цвет: norm_яркость × target_color
+      4. Фон восстанавливается белым
     """
     arr = np.array(img.convert("RGB"), dtype=np.float32)
 
-    # Маска белого фона
+    # Маска фона
     bg_mask = (arr[:, :, 0] > bg_threshold) & \
               (arr[:, :, 1] > bg_threshold) & \
               (arr[:, :, 2] > bg_threshold)
 
-    # Яркость каждого пикселя (0.0 – 1.0)
-    luminance = arr.mean(axis=2) / 255.0
+    # Яркость — среднее по каналам
+    luminance = arr.mean(axis=2)
+
+    # Нормализуем яркость только пикселей радиатора (не фона)
+    product_lum = luminance[~bg_mask]
+    if product_lum.size > 0:
+        lum_min = product_lum.min()
+        lum_max = product_lum.max()
+        if lum_max > lum_min:
+            norm = (luminance - lum_min) / (lum_max - lum_min)
+        else:
+            norm = luminance / 255.0
+    else:
+        norm = luminance / 255.0
 
     # Применяем целевой цвет
     result = np.zeros_like(arr)
-    result[:, :, 0] = luminance * color_rgb[0]
-    result[:, :, 1] = luminance * color_rgb[1]
-    result[:, :, 2] = luminance * color_rgb[2]
+    result[:, :, 0] = norm * color_rgb[0]
+    result[:, :, 1] = norm * color_rgb[1]
+    result[:, :, 2] = norm * color_rgb[2]
 
     # Восстанавливаем белый фон
     result[bg_mask] = [255.0, 255.0, 255.0]
