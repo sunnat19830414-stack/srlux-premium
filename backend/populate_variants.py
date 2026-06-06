@@ -31,6 +31,7 @@ MODEL_PREFIXES: list[tuple[str, str]] = [
     ("JD5025",   "JD5025"),
     ("WLD11",    "WLD11"),
     ("JD6812",   "JD6812"),
+    ("JD68",     "JD6812"),
     ("VD12",     "JD6812"),
     ("GLF7575A", "GLF7575A"),
     ("JDGL6",    "GLF7575A"),
