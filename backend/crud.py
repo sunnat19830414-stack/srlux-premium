@@ -185,7 +185,9 @@ async def bulk_upsert_products(db: AsyncSession, items: list) -> dict:
             existing.price_uzs = item.price_uzs
             existing.stock = item.stock
             existing.weight = item.weight
-            existing.image_url = item.image_url
+            # Не затираем вручную установленное фото если синхронизация не нашла новое
+            if item.image_url or not existing.image_url:
+                existing.image_url = item.image_url
             existing.is_active = item.is_active
             # Preserve manually set categories (negative dolibarr_id = custom)
             if category_id and existing.category_id is None:
