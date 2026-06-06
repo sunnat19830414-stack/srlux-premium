@@ -7,6 +7,29 @@ from schemas import ModelCardOut, ModelDetailOut, ModelListOut, ModelVariantOut
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
+# Чистые названия моделей для каталога
+MODEL_NAMES: dict[str, str] = {
+    "JD3015":   "Радиатор JD-3015 (300×150 мм)",
+    "JD3030":   "Радиатор JD-3030 (300×300 мм)",
+    "JD5025":   "Радиатор JD-5025 (500×250 мм)",
+    "WLD11":    "Радиатор плоский WLD-11 (600×120 мм)",
+    "JD6812":   "Радиатор JD-6812 (680×120 мм)",
+    "GLF7575A": "Радиатор напольный GLF-7575A",
+    "GZ2":      "Радиатор трубчатый GZ2",
+    "GZ3":      "Радиатор трубчатый GZ3",
+    "GZ4":      "Радиатор трубчатый GZ4",
+    "JDC22":    "Радиатор колонный JDC-22",
+    "NCR03":    "Радиатор NCR-03",
+    "BZ":       "Радиатор чугунный BZ",
+    "BZV3":     "Радиатор чугунный BZV3 (золото)",
+    "MAR660":   "Конвектор MAR-660",
+    "CM":       "Полотенцесушитель CM",
+    "GM":       "Полотенцесушитель GM",
+    "AM65":     "Вешалка хромированная AM65",
+    "UC":       "Аксессуары UC",
+    "HY":       "Термостат HY",
+}
+
 
 @router.get("", response_model=ModelListOut)
 async def list_models(db: AsyncSession = Depends(get_db)):
@@ -14,7 +37,7 @@ async def list_models(db: AsyncSession = Depends(get_db)):
     cards = [
         ModelCardOut(
             code=r["code"],
-            name_ru=r["name_ru"],
+            name_ru=MODEL_NAMES.get(r["code"], r["name_ru"]),
             category_name=r["category_name"],
             image_url=r["image_url"],
             colors=sorted(r["colors"] or []),
@@ -71,7 +94,7 @@ async def get_model(code: str, db: AsyncSession = Depends(get_db)):
 
     return ModelDetailOut(
         code=code,
-        name_ru=products[0].name_ru,
+        name_ru=MODEL_NAMES.get(code, products[0].name_ru),
         description_ru=description_ru,
         category_name=category_name,
         color_images=color_images,
