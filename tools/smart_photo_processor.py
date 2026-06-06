@@ -105,7 +105,7 @@ PROFILES = {
     },
 }
 
-SUPPORTED = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
+SUPPORTED = {".jpg", ".jpeg", ".jfif", ".jpe", ".png", ".webp", ".bmp", ".tiff", ".tif", ".heic", ".heif"}
 
 client = anthropic.Anthropic()
 
@@ -118,8 +118,10 @@ def analyze_photo(image_path: Path) -> str:
     ext = image_path.suffix.lower()
     media_types = {
         ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".jfif": "image/jpeg", ".jpe": "image/jpeg",
         ".png": "image/png", ".webp": "image/webp",
-        ".bmp": "image/bmp", ".tiff": "image/tiff",
+        ".bmp": "image/bmp", ".tiff": "image/tiff", ".tif": "image/tiff",
+        ".heic": "image/jpeg", ".heif": "image/jpeg",
     }
     media_type = media_types.get(ext, "image/jpeg")
 
