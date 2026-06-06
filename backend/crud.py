@@ -3,7 +3,7 @@ import re
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -55,6 +55,43 @@ async def get_product_by_slug(db: AsyncSession, slug: str):
         .options(selectinload(Product.category), selectinload(Product.variants))
     )
     return result.scalar_one_or_none()
+
+
+# ── Model cards (Variant 1) ────────────────────────────────────────────────────
+
+async def get_model_cards(db: AsyncSession):
+    sql = text("""
+        SELECT
+            p.parent_model                                        AS code,
+            MIN(p.name_ru)                                        AS name_ru,
+            MIN(c.name_ru)                                        AS category_name,
+            MIN(p.price_uzs)                                      AS price_from,
+            MAX(p.price_uzs)                                      AS price_to,
+            COALESCE(SUM(p.stock), 0)                             AS total_stock,
+            array_agg(DISTINCT p.color)
+                FILTER (WHERE p.color IS NOT NULL)                AS colors,
+            COALESCE(
+                MAX(p.image_url) FILTER (WHERE p.color = 'white'),
+                MAX(p.image_url) FILTER (WHERE p.image_url IS NOT NULL)
+            )                                                     AS image_url
+        FROM products p
+        LEFT JOIN categories c ON c.id = p.category_id
+        WHERE p.is_active = true AND p.parent_model IS NOT NULL
+        GROUP BY p.parent_model
+        ORDER BY p.parent_model
+    """)
+    result = await db.execute(sql)
+    return result.mappings().all()
+
+
+async def get_model_detail(db: AsyncSession, code: str):
+    result = await db.execute(
+        select(Product)
+        .where(Product.parent_model == code, Product.is_active == True)
+        .options(selectinload(Product.category))
+        .order_by(Product.color, Product.sections, Product.height_mm)
+    )
+    return result.scalars().all()
 
 
 # ── Categories ─────────────────────────────────────────────────────────────────

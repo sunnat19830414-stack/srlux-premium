@@ -40,6 +40,11 @@ class Product(Base):
     image_url = Column(String(1000), nullable=True)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     dolibarr_id = Column(Integer, unique=True, nullable=True, index=True)
+    parent_model = Column(String(100), nullable=True, index=True)
+    color = Column(String(50), nullable=True)
+    height_mm = Column(Integer, nullable=True)
+    sections = Column(Integer, nullable=True)
+    columns_count = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

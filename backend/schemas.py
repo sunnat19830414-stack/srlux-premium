@@ -1,6 +1,6 @@
 from __future__ import annotations
 from decimal import Decimal
-from typing import List, Optional
+from typing import Dict, List, Optional
 from pydantic import BaseModel, ConfigDict
 
 
@@ -52,6 +52,48 @@ class ProductListOut(BaseModel):
     page: int
     limit: int
     products: List[ProductOut]
+
+
+# ── Model cards (Variant 1 catalog) ───────────────────────────────────────────
+
+class ModelVariantOut(BaseModel):
+    id: int
+    sku: str
+    color: Optional[str]
+    sections: Optional[int]
+    height_mm: Optional[int]
+    columns_count: Optional[int]
+    price_uzs: Decimal
+    stock: int
+    image_url: Optional[str]
+
+
+class ModelCardOut(BaseModel):
+    code: str
+    name_ru: str
+    category_name: Optional[str]
+    image_url: Optional[str]
+    colors: List[str]
+    price_from: Decimal
+    price_to: Decimal
+    total_stock: int
+
+
+class ModelDetailOut(BaseModel):
+    code: str
+    name_ru: str
+    description_ru: Optional[str]
+    category_name: Optional[str]
+    color_images: Dict[str, Optional[str]]
+    colors: List[str]
+    sections_available: List[int]
+    height_mm_available: List[int]
+    variants: List[ModelVariantOut]
+
+
+class ModelListOut(BaseModel):
+    total: int
+    models: List[ModelCardOut]
 
 
 # ── Admin bulk import — categories ────────────────────────────────────────────

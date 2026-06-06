@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
 from routers import admin, categories, orders, products
+from routers import models as models_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ app.include_router(products.router)
 app.include_router(categories.router)
 app.include_router(orders.router)
 app.include_router(admin.router)
+app.include_router(models_router.router)
 
 
 @app.get("/health", tags=["system"])
