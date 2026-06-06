@@ -14,7 +14,32 @@ const COLOR_DISPLAY: Record<string, { label: string; hex: string; border?: boole
 }
 
 function fmt(n: number) {
-  return Number(n).toLocaleString('ru-RU')
+  return Math.round(Number(n)).toLocaleString('ru-RU')
+}
+
+interface GroupRow {
+  key: string
+  color: string | null
+  sections: number | null
+  totalStock: number
+  avgPrice: number
+}
+
+function buildGroupedRows(variants: ModelVariant[]): GroupRow[] {
+  const map = new Map<string, ModelVariant[]>()
+  variants.forEach((v) => {
+    const key = `${v.color ?? ''}|${v.sections ?? ''}`
+    const g = map.get(key)
+    if (g) g.push(v)
+    else map.set(key, [v])
+  })
+  return Array.from(map.entries()).map(([key, vs]) => ({
+    key,
+    color:      vs[0].color,
+    sections:   vs[0].sections,
+    totalStock: vs.reduce((s, v) => s + v.stock, 0),
+    avgPrice:   vs.reduce((s, v) => s + Number(v.price_uzs), 0) / vs.length,
+  }))
 }
 
 interface Props {
@@ -27,8 +52,8 @@ export default function ModelPage({ onAddToCart }: Props) {
   const [model, setModel]               = useState<ModelDetail | null>(null)
   const [loading, setLoading]           = useState(true)
   const [notFound, setNotFound]         = useState(false)
-  const [selectedColor, setSelectedColor]     = useState<string | null>(null)
-  const [selectedSections, setSelectedSections] = useState<number | null>(null)
+  const [selectedColor, setSelectedColor]         = useState<string | null>(null)
+  const [selectedSections, setSelectedSections]   = useState<number | null>(null)
   const [qty, setQty]     = useState(1)
   const [added, setAdded] = useState(false)
   const [imgError, setImgError] = useState(false)
@@ -66,23 +91,34 @@ export default function ModelPage({ onAddToCart }: Props) {
     )
   }
 
-  // Find selected variant
-  const selectedVariant: ModelVariant | null = model.variants.find((v) => {
+  // All variants matching current selection
+  const groupCandidates = model.variants.filter((v) => {
     const colorOk    = !selectedColor    || v.color    === selectedColor
     const sectionsOk = !selectedSections || v.sections === selectedSections
     return colorOk && sectionsOk
-  }) ?? null
+  })
 
-  // Available sections for current color
+  // Pick the variant with highest stock for cart
+  const selectedVariant: ModelVariant | null =
+    [...groupCandidates].sort((a, b) => b.stock - a.stock)[0] ?? null
+
+  // Aggregated price/stock for the selected group
+  const groupTotalStock = groupCandidates.reduce((s, v) => s + v.stock, 0)
+  const groupAvgPrice   = groupCandidates.length
+    ? groupCandidates.reduce((s, v) => s + Number(v.price_uzs), 0) / groupCandidates.length
+    : 0
+
+  const inStock = groupTotalStock > 0
+
+  // Sections available for the currently selected color
   const sectionsForColor = model.sections_available.filter((s) =>
     model.variants.some((v) => v.color === selectedColor && v.sections === s),
   )
 
-  const currentImage = selectedColor
-    ? (model.color_images[selectedColor] ?? null)
-    : null
+  const currentImage = selectedColor ? (model.color_images[selectedColor] ?? null) : null
 
-  const inStock = selectedVariant ? selectedVariant.stock > 0 : false
+  // Grouped rows for the table (merges duplicates from multiple manufacturers)
+  const groupedRows = buildGroupedRows(model.variants)
 
   const handleAdd = () => {
     if (!selectedVariant) return
@@ -202,13 +238,13 @@ export default function ModelPage({ onAddToCart }: Props) {
             )}
 
             {/* Price + stock */}
-            {selectedVariant ? (
+            {groupCandidates.length > 0 ? (
               <div className="bg-anthracite-800 rounded-xl p-4 border border-gold-700/15">
                 <div className="flex items-end justify-between gap-4">
                   <div>
                     <p className="text-xs text-gray-500 mb-1">Цена</p>
                     <p className="text-3xl font-extrabold bg-gold-gradient bg-clip-text text-transparent">
-                      {fmt(selectedVariant.price_uzs)}
+                      {fmt(groupAvgPrice)}
                     </p>
                     <p className="text-xs text-gray-500 mt-0.5">{t.sum}</p>
                   </div>
@@ -216,7 +252,7 @@ export default function ModelPage({ onAddToCart }: Props) {
                     inStock ? 'bg-green-900/40 text-green-400' : 'bg-red-900/40 text-red-400'
                   }`}>
                     <span className={`w-2 h-2 rounded-full ${inStock ? 'bg-green-400' : 'bg-red-400'}`} />
-                    {inStock ? `${selectedVariant.stock} ${t.qty}` : t.outOfStock}
+                    {inStock ? `${groupTotalStock} ${t.qty}` : t.outOfStock}
                   </span>
                 </div>
               </div>
@@ -261,20 +297,21 @@ export default function ModelPage({ onAddToCart }: Props) {
               </button>
             </div>
 
-            {/* Description */}
+            {/* Description — render HTML from Dolibarr */}
             {model.description_ru && (
               <div className="bg-anthracite-800 rounded-xl p-4 border border-gold-700/10">
                 <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Описание</p>
-                <p className="text-gray-300 text-sm leading-relaxed whitespace-pre-line">
-                  {model.description_ru}
-                </p>
+                <div
+                  className="text-gray-300 text-sm leading-relaxed [&_strong]:text-gray-200 [&_br]:block"
+                  dangerouslySetInnerHTML={{ __html: model.description_ru }}
+                />
               </div>
             )}
           </div>
         </div>
 
-        {/* Variants table */}
-        {model.variants.length > 1 && (
+        {/* Variants table — grouped by (color, sections) */}
+        {groupedRows.length > 1 && (
           <div className="mt-12">
             <h2 className="text-lg font-bold text-white mb-4">Все варианты</h2>
             <div className="overflow-x-auto rounded-xl border border-gold-700/10">
@@ -292,22 +329,24 @@ export default function ModelPage({ onAddToCart }: Props) {
                   </tr>
                 </thead>
                 <tbody>
-                  {model.variants.map((v) => {
-                    const cd = v.color ? (COLOR_DISPLAY[v.color] ?? { label: v.color, hex: '#888' }) : null
-                    const isSelected = selectedVariant?.id === v.id
+                  {groupedRows.map((row) => {
+                    const cd = row.color ? (COLOR_DISPLAY[row.color] ?? { label: row.color, hex: '#888' }) : null
+                    const isSelected =
+                      row.color    === selectedColor &&
+                      row.sections === selectedSections
                     return (
                       <tr
-                        key={v.id}
+                        key={row.key}
                         onClick={() => {
-                          if (v.color)    { setSelectedColor(v.color); setImgError(false) }
-                          if (v.sections) setSelectedSections(v.sections)
+                          if (row.color !== null)    { setSelectedColor(row.color); setImgError(false) }
+                          if (row.sections !== null)   setSelectedSections(row.sections)
                         }}
                         className={`border-b border-gold-700/10 cursor-pointer transition-colors ${
                           isSelected ? 'bg-gold/5' : 'hover:bg-anthracite-800'
                         }`}
                       >
                         {model.sections_available.length > 0 && (
-                          <td className="py-2.5 px-4 text-gray-300">{v.sections ?? '—'}</td>
+                          <td className="py-2.5 px-4 text-gray-300">{row.sections ?? '—'}</td>
                         )}
                         {model.colors.length > 1 && (
                           <td className="py-2.5 px-4">
@@ -326,11 +365,11 @@ export default function ModelPage({ onAddToCart }: Props) {
                           </td>
                         )}
                         <td className="py-2.5 px-4 text-right font-semibold text-gold">
-                          {fmt(v.price_uzs)}
+                          {fmt(row.avgPrice)}
                         </td>
                         <td className="py-2.5 px-4 text-right">
-                          <span className={v.stock > 0 ? 'text-green-400' : 'text-gray-600'}>
-                            {v.stock > 0 ? `${v.stock} ${t.qty}` : '—'}
+                          <span className={row.totalStock > 0 ? 'text-green-400' : 'text-gray-600'}>
+                            {row.totalStock > 0 ? `${row.totalStock} ${t.qty}` : '—'}
                           </span>
                         </td>
                       </tr>
