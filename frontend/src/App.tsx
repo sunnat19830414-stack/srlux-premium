@@ -6,6 +6,7 @@ import Header from './components/Header'
 import { LocaleProvider } from './contexts/LocaleContext'
 import CartPage from './pages/CartPage'
 import CatalogPage from './pages/CatalogPage'
+import ModelPage from './pages/ModelPage'
 import ProductPage from './pages/ProductPage'
 
 interface CartItem extends Product {
@@ -39,14 +40,10 @@ export default function App() {
           <Header cartCount={cartCount} />
           <main className="flex-1">
             <Routes>
+              <Route path="/" element={<CatalogPage />} />
               <Route
-                path="/"
-                element={
-                  <CatalogPage
-                    cartItems={cartItems}
-                    onCartChange={setCartItems}
-                  />
-                }
+                path="/model/:code"
+                element={<ModelPage onAddToCart={addToCart} />}
               />
               <Route
                 path="/product/:slug"

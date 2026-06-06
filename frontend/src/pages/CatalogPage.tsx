@@ -1,92 +1,37 @@
-import {
-  Flame, Thermometer, Wrench, Wind, Droplets,
-  Zap, Settings, Package, Layers, ChevronRight,
-} from 'lucide-react'
-import { useEffect, useState, useCallback } from 'react'
-import type { Category, Product, Variant } from '../api/client'
-import { fetchCategories, fetchProducts } from '../api/client'
-import ProductCard from '../components/ProductCard'
+import { ChevronRight, Package } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import type { ModelCard } from '../api/client'
+import { fetchModels } from '../api/client'
+import ModelCardComponent from '../components/ModelCard'
 import { useLocale } from '../contexts/LocaleContext'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const ICON_MAP: Record<string, React.ComponentType<any>> = {
-  Flame, Thermometer, Wrench, Wind, Droplets,
-  Zap, Settings, Package, Layers,
-}
-
-function CategoryIcon({ name, size = 18 }: { name: string; size?: number }) {
-  const Ic = ICON_MAP[name] || Package
-  return <Ic size={size} />
-}
-
-interface CartItem extends Product {
-  variant: Variant | null
-  cartQty: number
-}
-
-interface Props {
-  onCartChange: (items: CartItem[]) => void
-  cartItems: CartItem[]
-}
-
-const LIMIT = 20
-
-export default function CatalogPage({ onCartChange, cartItems }: Props) {
-  const { lang, t } = useLocale()
-  const [categories, setCategories] = useState<Category[]>([])
-  const [products, setProducts] = useState<Product[]>([])
-  const [total, setTotal] = useState(0)
-  const [page, setPage] = useState(1)
-  const [selectedCat, setSelectedCat] = useState<number | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [loadingMore, setLoadingMore] = useState(false)
+export default function CatalogPage() {
+  const { t } = useLocale()
+  const [allModels, setAllModels] = useState<ModelCard[]>([])
+  const [loading, setLoading]     = useState(true)
+  const [selectedCat, setSelectedCat] = useState<string | null>(null)
 
   useEffect(() => {
-    fetchCategories().then((r) => setCategories(r.data))
+    fetchModels()
+      .then((r) => setAllModels(r.data.models))
+      .finally(() => setLoading(false))
   }, [])
 
-  const loadProducts = useCallback(
-    async (p: number, catId: number | null, replace: boolean) => {
-      p === 1 ? setLoading(true) : setLoadingMore(true)
-      try {
-        const res = await fetchProducts({ page: p, limit: LIMIT, category_id: catId ?? undefined })
-        const data = res.data
-        setTotal(data.total)
-        setProducts((prev) => (replace ? data.products : [...prev, ...data.products]))
-      } finally {
-        setLoading(false)
-        setLoadingMore(false)
+  const categories = useMemo(() => {
+    const seen = new Set<string>()
+    const cats: string[] = []
+    allModels.forEach((m) => {
+      if (m.category_name && !seen.has(m.category_name)) {
+        seen.add(m.category_name)
+        cats.push(m.category_name)
       }
-    },
-    [],
-  )
+    })
+    return cats.sort()
+  }, [allModels])
 
-  useEffect(() => {
-    setPage(1)
-    loadProducts(1, selectedCat, true)
-  }, [selectedCat, loadProducts])
-
-  const handleLoadMore = () => {
-    const next = page + 1
-    setPage(next)
-    loadProducts(next, selectedCat, false)
-  }
-
-  const addToCart = (product: Product, variant: Variant | null, qty: number) => {
-    const existing = cartItems.findIndex(
-      (i) => i.id === product.id && (i.variant?.id ?? 'base') === (variant?.id ?? 'base'),
-    )
-    if (existing >= 0) {
-      const updated = cartItems.map((item, idx) =>
-        idx === existing ? { ...item, cartQty: item.cartQty + qty } : item,
-      )
-      onCartChange(updated)
-    } else {
-      onCartChange([...cartItems, { ...product, variant, cartQty: qty }])
-    }
-  }
-
-  const hasMore = products.length < total
+  const models = selectedCat
+    ? allModels.filter((m) => m.category_name === selectedCat)
+    : allModels
 
   return (
     <div className="min-h-screen bg-anthracite-900">
@@ -139,17 +84,17 @@ export default function CatalogPage({ onCartChange, cartItems }: Props) {
                   </button>
                 </li>
                 {categories.map((cat) => (
-                  <li key={cat.id}>
+                  <li key={cat}>
                     <button
-                      onClick={() => setSelectedCat(cat.id)}
+                      onClick={() => setSelectedCat(cat)}
                       className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition-colors ${
-                        selectedCat === cat.id
+                        selectedCat === cat
                           ? 'text-gold bg-gold/5 border-r-2 border-gold'
                           : 'text-gray-400 hover:text-white'
                       }`}
                     >
-                      <CategoryIcon name={cat.icon} size={15} />
-                      {lang === 'uz' ? cat.name_uz : cat.name_ru}
+                      <Package size={15} />
+                      {cat}
                     </button>
                   </li>
                 ))}
@@ -157,77 +102,63 @@ export default function CatalogPage({ onCartChange, cartItems }: Props) {
             </div>
           </aside>
 
-          {/* Products grid */}
+          {/* Grid */}
           <div className="flex-1 min-w-0">
-            {/* Mobile category pills */}
+            {/* Mobile pills */}
             {categories.length > 0 && (
               <div className="lg:hidden flex gap-2 overflow-x-auto pb-3 mb-6 scrollbar-hide">
                 <button
                   onClick={() => setSelectedCat(null)}
-                  className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                  className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
                     selectedCat === null
                       ? 'bg-gold text-anthracite-900 border-gold'
                       : 'border-gray-700 text-gray-400'
                   }`}
                 >
-                  <Package size={12} />
                   {t.allCategories}
                 </button>
                 {categories.map((cat) => (
                   <button
-                    key={cat.id}
-                    onClick={() => setSelectedCat(cat.id)}
-                    className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-                      selectedCat === cat.id
+                    key={cat}
+                    onClick={() => setSelectedCat(cat)}
+                    className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                      selectedCat === cat
                         ? 'bg-gold text-anthracite-900 border-gold'
                         : 'border-gray-700 text-gray-400'
                     }`}
                   >
-                    <CategoryIcon name={cat.icon} size={12} />
-                    {lang === 'uz' ? cat.name_uz : cat.name_ru}
+                    {cat}
                   </button>
                 ))}
               </div>
             )}
 
-            {/* Count */}
             {!loading && (
               <p className="text-xs text-gray-500 mb-4">
-                {total > 0 ? `Показано ${products.length} из ${total}` : ''}
+                {models.length > 0 ? `Моделей: ${models.length}` : ''}
               </p>
             )}
 
             {loading ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
                 {Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} className="bg-anthracite-800 rounded-xl h-80 animate-pulse border border-gold-700/10" />
+                  <div
+                    key={i}
+                    className="bg-anthracite-800 rounded-xl h-80 animate-pulse border border-gold-700/10"
+                  />
                 ))}
               </div>
-            ) : products.length === 0 ? (
+            ) : models.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-24 text-gray-500">
                 <Package size={48} className="mb-4 opacity-30" />
                 <p>{t.noProducts}</p>
               </div>
             ) : (
-              <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
-                  {products.map((p) => (
-                    <ProductCard key={`${p.id}-${p.slug}`} product={p} onAddToCart={addToCart} />
-                  ))}
-                </div>
-
-                {hasMore && (
-                  <div className="flex justify-center mt-10">
-                    <button
-                      onClick={handleLoadMore}
-                      disabled={loadingMore}
-                      className="px-8 py-3 rounded-xl border border-gold/50 text-gold hover:bg-gold/10 font-semibold text-sm transition-all disabled:opacity-50"
-                    >
-                      {loadingMore ? t.loading : t.loadMore}
-                    </button>
-                  </div>
-                )}
-              </>
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
+                {models.map((m) => (
+                  <ModelCardComponent key={m.code} model={m} />
+                ))}
+              </div>
             )}
           </div>
         </div>

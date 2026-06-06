@@ -77,3 +77,50 @@ export const fetchCategories = () =>
 
 export const placeOrder = (data: OrderIn) =>
   api.post('/api/orders', data)
+
+// ── Model catalog (Variant 1) ──────────────────────────────────────────────────
+
+export interface ModelVariant {
+  id: number
+  sku: string
+  slug: string
+  name_ru: string
+  color: string | null
+  sections: number | null
+  height_mm: number | null
+  columns_count: number | null
+  price_uzs: number
+  stock: number
+  image_url: string | null
+}
+
+export interface ModelCard {
+  code: string
+  name_ru: string
+  category_name: string | null
+  image_url: string | null
+  colors: string[]
+  price_from: number
+  price_to: number
+  total_stock: number
+}
+
+export interface ModelList {
+  total: number
+  models: ModelCard[]
+}
+
+export interface ModelDetail {
+  code: string
+  name_ru: string
+  description_ru: string | null
+  category_name: string | null
+  color_images: Record<string, string | null>
+  colors: string[]
+  sections_available: number[]
+  height_mm_available: number[]
+  variants: ModelVariant[]
+}
+
+export const fetchModels = () => api.get<ModelList>('/api/models')
+export const fetchModel = (code: string) => api.get<ModelDetail>(`/api/models/${code}`)

@@ -81,6 +81,8 @@ async def get_model(code: str, db: AsyncSession = Depends(get_db)):
         ModelVariantOut(
             id=p.id,
             sku=p.sku,
+            slug=p.slug,
+            name_ru=p.name_ru,
             color=p.color,
             sections=p.sections,
             height_mm=p.height_mm,

@@ -1,0 +1,110 @@
+import { ChevronRight, ImageOff } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import type { ModelCard } from '../api/client'
+
+const COLOR_HEX: Record<string, { hex: string; border?: boolean }> = {
+  white:      { hex: '#FFFFFF', border: true },
+  anthracite: { hex: '#484A4E' },
+  black:      { hex: '#1C1C1E' },
+  gold:       { hex: '#C9A227' },
+  chrome:     { hex: '#C0C0C0', border: true },
+}
+
+function fmt(n: number) {
+  return Number(n).toLocaleString('ru-RU')
+}
+
+export default function ModelCard({ model }: { model: ModelCard }) {
+  const inStock = model.total_stock > 0
+  const priceFrom = Number(model.price_from)
+  const priceTo   = Number(model.price_to)
+
+  return (
+    <Link
+      to={`/model/${model.code}`}
+      className="group flex flex-col bg-anthracite-800 rounded-xl border border-gold-700/10 hover:border-gold/40 shadow-card hover:shadow-gold transition-all duration-300 overflow-hidden animate-slide-up"
+    >
+      {/* Image */}
+      <div className="relative overflow-hidden bg-anthracite-700 aspect-[4/3]">
+        {model.image_url ? (
+          <img
+            src={model.image_url}
+            alt={model.name_ru}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            onError={(e) => {
+              e.currentTarget.style.display = 'none'
+              const next = e.currentTarget.nextElementSibling as HTMLElement
+              if (next) next.style.display = 'flex'
+            }}
+          />
+        ) : null}
+        <div
+          className={`${model.image_url ? 'hidden' : 'flex'} absolute inset-0 items-center justify-center flex-col gap-2 text-gray-600`}
+        >
+          <ImageOff size={36} />
+        </div>
+
+        {/* Stock badge */}
+        <div className="absolute top-2 right-2">
+          <span className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-semibold backdrop-blur-sm ${
+            inStock ? 'bg-green-900/80 text-green-400' : 'bg-red-900/80 text-red-400'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${inStock ? 'bg-green-400' : 'bg-red-400'}`} />
+            {inStock ? `${model.total_stock} шт` : 'Нет'}
+          </span>
+        </div>
+
+        {/* Color dots */}
+        {model.colors.length > 0 && (
+          <div className="absolute bottom-2 left-2 flex gap-1">
+            {model.colors.map((c) => {
+              const s = COLOR_HEX[c] || { hex: '#888' }
+              return (
+                <span
+                  key={c}
+                  className="w-4 h-4 rounded-full shadow"
+                  style={{
+                    backgroundColor: s.hex,
+                    border: s.border ? '1px solid #555' : '1px solid #333',
+                  }}
+                  title={c}
+                />
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Info */}
+      <div className="flex flex-col flex-1 p-4 gap-3">
+        {model.category_name && (
+          <p className="text-[10px] text-gold uppercase tracking-widest font-semibold">
+            {model.category_name}
+          </p>
+        )}
+
+        <h3 className="text-white font-semibold text-sm leading-snug group-hover:text-gold transition-colors">
+          {model.name_ru}
+        </h3>
+
+        <div className="mt-auto pt-3 border-t border-gold-700/10 flex items-end justify-between gap-2">
+          <div>
+            <p className="text-[10px] text-gray-500 mb-0.5">от</p>
+            <p className="text-xl font-bold bg-gold-gradient bg-clip-text text-transparent">
+              {fmt(priceFrom)}
+            </p>
+            {priceTo > priceFrom && (
+              <p className="text-[10px] text-gray-500">до {fmt(priceTo)} сум</p>
+            )}
+            {priceTo === priceFrom && (
+              <p className="text-[10px] text-gray-500">сум</p>
+            )}
+          </div>
+          <span className="flex items-center gap-1 text-gold text-xs font-semibold group-hover:gap-2 transition-all">
+            Выбрать <ChevronRight size={14} />
+          </span>
+        </div>
+      </div>
+    </Link>
+  )
+}

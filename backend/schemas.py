@@ -59,6 +59,8 @@ class ProductListOut(BaseModel):
 class ModelVariantOut(BaseModel):
     id: int
     sku: str
+    slug: str
+    name_ru: str
     color: Optional[str]
     sections: Optional[int]
     height_mm: Optional[int]
