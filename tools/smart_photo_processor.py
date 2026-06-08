@@ -165,7 +165,7 @@ def generate_color_variant_claid(
     claid_key: str,
 ) -> Image.Image | None:
     """
-    AI-перекраска через Claid.AI (multipart: файл + JSON в одном запросе).
+    AI-перекраска через Claid.AI API v1.
     Возвращает PIL Image или None при ошибке (тогда используется numpy-метод).
     """
     if not HAS_REQUESTS:
@@ -180,33 +180,46 @@ def generate_color_variant_claid(
     with open(src_path, "rb") as f:
         image_bytes = f.read()
 
+    b64 = base64.b64encode(image_bytes).decode()
+
     print(f"    🤖 Claid.AI: генерирую {COLOR_LABELS.get(color_name, color_name)}...", end=" ", flush=True)
 
-    payload = json.dumps({
+    # Пробуем AI-edit endpoint (генеративная перекраска)
+    endpoints = [
+        f"{CLAID_BASE}/v1-beta1/image/ai-edit",
+        f"{CLAID_BASE}/v1/image/edit",
+    ]
+
+    payload = {
+        "input": {"url": f"data:image/jpeg;base64,{b64}"},
         "output": {"format": {"type": "jpeg", "quality": 92}},
-        "operations": {
-            "ai_photoshoot": {"prompt": prompt},
-        },
-    })
+        "operations": {"ai_photoshoot": {"prompt": prompt}},
+    }
 
-    resp = _requests.post(
-        f"{CLAID_BASE}/v1-beta1/image/edit",
-        headers={"Authorization": f"Bearer {claid_key}"},
-        files={
-            "file": ("photo.jpg", image_bytes, "image/jpeg"),
-            "data": (None, payload, "application/json"),
-        },
-        timeout=180,
-    )
+    resp = None
+    for endpoint in endpoints:
+        resp = _requests.post(
+            endpoint,
+            headers={
+                "Authorization": f"Bearer {claid_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=180,
+        )
+        if resp.status_code != 404:
+            break
 
-    if resp.status_code not in (200, 201):
-        raise RuntimeError(f"Claid error {resp.status_code}: {resp.text[:400]}")
+    if resp is None or resp.status_code not in (200, 201):
+        code = resp.status_code if resp is not None else "?"
+        text = resp.text[:400] if resp is not None else ""
+        raise RuntimeError(f"Claid error {code}: {text}")
 
     result = resp.json()
     output = result.get("output") or result
     result_url = output.get("tmp_url") or output.get("url")
     if not result_url:
-        raise RuntimeError(f"No output URL in response: {json.dumps(result)[:300]}")
+        raise RuntimeError(f"No output URL: {json.dumps(result)[:300]}")
 
     img_resp = _requests.get(result_url, timeout=60)
     img_resp.raise_for_status()
