@@ -26,6 +26,7 @@ smart_photo_processor.py — Умный обработчик фото товар
 import argparse
 import base64
 import io
+import json
 import os
 import sys
 from pathlib import Path
@@ -158,65 +159,13 @@ client = anthropic.Anthropic()
 
 # ─── Claid.AI AI-перекраска ───────────────────────────────────────────────────
 
-def _claid_upload_image(image_bytes: bytes, claid_key: str) -> str:
-    """Загружает файл в Claid.AI и возвращает URL для дальнейших операций."""
-    resp = _requests.post(
-        f"{CLAID_BASE}/v1-beta1/assets",
-        headers={"Authorization": f"Bearer {claid_key}"},
-        files={"file": ("photo.jpg", image_bytes, "image/jpeg")},
-        timeout=60,
-    )
-    if resp.status_code not in (200, 201):
-        raise RuntimeError(f"Claid upload error {resp.status_code}: {resp.text[:300]}")
-    data = resp.json()
-    # Claid.AI возвращает {"id": "...", "url": "..."}
-    return data.get("url") or data.get("tmp_url") or data["id"]
-
-
-def _claid_ai_photoshoot(input_url: str, prompt: str, claid_key: str) -> bytes:
-    """Вызывает AI Photoshoot и возвращает байты результирующего изображения."""
-    payload = {
-        "input": input_url,
-        "output": {
-            "format": {"type": "jpeg", "quality": 92},
-        },
-        "operations": {
-            "ai_photoshoot": {
-                "prompt": prompt,
-            }
-        },
-    }
-    resp = _requests.post(
-        f"{CLAID_BASE}/v1-beta1/image/edit",
-        headers={
-            "Authorization": f"Bearer {claid_key}",
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=180,
-    )
-    if resp.status_code not in (200, 201):
-        raise RuntimeError(f"Claid edit error {resp.status_code}: {resp.text[:400]}")
-
-    result = resp.json()
-    # Claid возвращает {"output": {"tmp_url": "..."}} или {"tmp_url": "..."}
-    output = result.get("output") or result
-    result_url = output.get("tmp_url") or output.get("url")
-    if not result_url:
-        raise RuntimeError(f"Claid.AI: no output URL in response: {result}")
-
-    img_resp = _requests.get(result_url, timeout=60)
-    img_resp.raise_for_status()
-    return img_resp.content
-
-
 def generate_color_variant_claid(
     src_path: Path,
     color_name: str,
     claid_key: str,
 ) -> Image.Image | None:
     """
-    AI-перекраска через Claid.AI.
+    AI-перекраска через Claid.AI (multipart: файл + JSON в одном запросе).
     Возвращает PIL Image или None при ошибке (тогда используется numpy-метод).
     """
     if not HAS_REQUESTS:
@@ -231,14 +180,38 @@ def generate_color_variant_claid(
     with open(src_path, "rb") as f:
         image_bytes = f.read()
 
-    print(f"    🤖 Claid.AI: загружаю фото...", end=" ", flush=True)
-    input_url = _claid_upload_image(image_bytes, claid_key)
-    print(f"загружено. Генерирую {COLOR_LABELS.get(color_name, color_name)}...", end=" ", flush=True)
+    print(f"    🤖 Claid.AI: генерирую {COLOR_LABELS.get(color_name, color_name)}...", end=" ", flush=True)
 
-    result_bytes = _claid_ai_photoshoot(input_url, prompt, claid_key)
-    img = Image.open(io.BytesIO(result_bytes)).convert("RGB")
+    payload = json.dumps({
+        "output": {"format": {"type": "jpeg", "quality": 92}},
+        "operations": {
+            "ai_photoshoot": {"prompt": prompt},
+        },
+    })
+
+    resp = _requests.post(
+        f"{CLAID_BASE}/v1-beta1/image/edit",
+        headers={"Authorization": f"Bearer {claid_key}"},
+        files={
+            "file": ("photo.jpg", image_bytes, "image/jpeg"),
+            "data": (None, payload, "application/json"),
+        },
+        timeout=180,
+    )
+
+    if resp.status_code not in (200, 201):
+        raise RuntimeError(f"Claid error {resp.status_code}: {resp.text[:400]}")
+
+    result = resp.json()
+    output = result.get("output") or result
+    result_url = output.get("tmp_url") or output.get("url")
+    if not result_url:
+        raise RuntimeError(f"No output URL in response: {json.dumps(result)[:300]}")
+
+    img_resp = _requests.get(result_url, timeout=60)
+    img_resp.raise_for_status()
     print("готово.")
-    return img
+    return Image.open(io.BytesIO(img_resp.content)).convert("RGB")
 
 
 # ─── Локальная numpy-перекраска ───────────────────────────────────────────────
