@@ -234,18 +234,18 @@ def generate_color_variant_claid(
     print(f"ок. Генерирую {COLOR_LABELS.get(color_name, color_name)}...", end=" ", flush=True)
 
     # Пробуем разные форматы операции для /v1-beta1/image/ai-edit
+    # input должен быть объектом {"url": "..."}, а не просто строкой
+    inp = {"url": public_url}
+    out = {"format": {"type": "jpeg", "quality": 92}}
     payloads = [
-        # Попытка 1: prompt на верхнем уровне
-        {"input": public_url, "prompt": prompt,
-         "output": {"format": {"type": "jpeg", "quality": 92}}},
+        # Попытка 1: prompt на верхнем уровне (без operations)
+        {"input": inp, "prompt": prompt, "output": out},
         # Попытка 2: operations.edit
-        {"input": public_url,
-         "output": {"format": {"type": "jpeg", "quality": 92}},
-         "operations": {"edit": {"prompt": prompt}}},
+        {"input": inp, "output": out, "operations": {"edit": {"prompt": prompt}}},
         # Попытка 3: operations.recolor
-        {"input": public_url,
-         "output": {"format": {"type": "jpeg", "quality": 92}},
-         "operations": {"recolor": {"prompt": prompt}}},
+        {"input": inp, "output": out, "operations": {"recolor": {"prompt": prompt}}},
+        # Попытка 4: operations.generative_fill
+        {"input": inp, "output": out, "operations": {"generative_fill": {"prompt": prompt}}},
     ]
 
     resp = None
