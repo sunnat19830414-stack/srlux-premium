@@ -180,39 +180,44 @@ def generate_color_variant_claid(
     with open(src_path, "rb") as f:
         image_bytes = f.read()
 
-    b64 = base64.b64encode(image_bytes).decode()
-
     print(f"    🤖 Claid.AI: генерирую {COLOR_LABELS.get(color_name, color_name)}...", end=" ", flush=True)
 
-    # Пробуем AI-edit endpoint (генеративная перекраска)
-    endpoints = [
-        f"{CLAID_BASE}/v1-beta1/image/ai-edit",
-        f"{CLAID_BASE}/v1/image/edit",
+    # Claid.AI /v1-beta1/image/ai-edit — multipart: image file + prompt text
+    attempts = [
+        # (files_dict, data_dict)
+        (
+            {"image": ("photo.jpg", image_bytes, "image/jpeg")},
+            {"prompt": prompt},
+        ),
+        (
+            {"file": ("photo.jpg", image_bytes, "image/jpeg")},
+            {"prompt": prompt},
+        ),
+        (
+            {"image": ("photo.jpg", image_bytes, "image/jpeg")},
+            {"data": json.dumps({"prompt": prompt, "output": {"format": {"type": "jpeg"}}})},
+        ),
     ]
 
-    payload = {
-        "input": {"url": f"data:image/jpeg;base64,{b64}"},
-        "output": {"format": {"type": "jpeg", "quality": 92}},
-        "operations": {"ai_photoshoot": {"prompt": prompt}},
-    }
-
     resp = None
-    for endpoint in endpoints:
+    for files_kw, data_kw in attempts:
         resp = _requests.post(
-            endpoint,
-            headers={
-                "Authorization": f"Bearer {claid_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
+            f"{CLAID_BASE}/v1-beta1/image/ai-edit",
+            headers={"Authorization": f"Bearer {claid_key}"},
+            files=files_kw,
+            data=data_kw,
             timeout=180,
         )
-        if resp.status_code != 404:
+        if resp.status_code not in (400, 422):
+            break  # either success or non-validation error — stop trying
+        err = resp.json().get("error_details", {})
+        # If input field error persists, try next format; otherwise break
+        if "input" not in err and "image" not in err and "file" not in err:
             break
 
     if resp is None or resp.status_code not in (200, 201):
         code = resp.status_code if resp is not None else "?"
-        text = resp.text[:400] if resp is not None else ""
+        text = resp.text[:500] if resp is not None else ""
         raise RuntimeError(f"Claid error {code}: {text}")
 
     result = resp.json()
