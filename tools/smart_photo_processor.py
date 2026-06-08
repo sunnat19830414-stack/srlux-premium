@@ -59,6 +59,11 @@ except ImportError:
 CLAID_BASE = "https://api.claid.ai"
 
 CLAID_PROMPTS = {
+    "white": (
+        "Change the color of the radiator to pure white (RAL 9010). "
+        "Keep identical shape, section structure, metallic sheen, highlights, shadows, and lighting. "
+        "The background must remain pure white. Do not change anything except the color."
+    ),
     "anthracite": (
         "Change the color of the radiator to dark anthracite gray (RAL 7016 charcoal). "
         "Keep identical shape, section structure, metallic sheen, highlights, shadows, and lighting. "
@@ -405,11 +410,17 @@ def process_photo(
     colors: list[str] | None = None,
     use_claid: bool = False,
     claid_key: str | None = None,
+    force_main: bool = False,
 ) -> tuple[str, str]:
-    print(f"  🔍 Анализирую {src.name}...", end=" ", flush=True)
-    photo_type = analyze_photo(src)
-    profile = PROFILES[photo_type]
-    print(f"тип: {photo_type} ({profile['description']})")
+    if force_main:
+        photo_type = "main"
+        profile = PROFILES["main"]
+        print(f"  📌 {src.name} → тип принудительно: main")
+    else:
+        print(f"  🔍 Анализирую {src.name}...", end=" ", flush=True)
+        photo_type = analyze_photo(src)
+        profile = PROFILES[photo_type]
+        print(f"тип: {photo_type} ({profile['description']})")
 
     img = Image.open(src).convert("RGBA")
 
@@ -435,9 +446,7 @@ def process_photo(
         for color_name in colors:
             label = COLOR_LABELS.get(color_name, color_name)
 
-            if color_name == "white":
-                colored = processed
-            elif use_claid and claid_key and color_name in CLAID_PROMPTS:
+            if use_claid and claid_key and color_name in CLAID_PROMPTS:
                 try:
                     colored = generate_color_variant_claid(src, color_name, claid_key)
                     if colored is None:
@@ -508,6 +517,11 @@ def main():
         ),
     )
     parser.add_argument(
+        "--force-main",
+        action="store_true",
+        help="Принудительно обрабатывать все фото как тип 'main' (пропустить Claude Vision анализ) и генерировать цветовые варианты.",
+    )
+    parser.add_argument(
         "--claid",
         action="store_true",
         help=(
@@ -561,6 +575,7 @@ def main():
                 f, dst_dir, sku, i, colors,
                 use_claid=args.claid,
                 claid_key=claid_key,
+                force_main=args.force_main,
             )
             results[photo_type].append(output_name)
         except Exception as e:
