@@ -182,19 +182,55 @@ def generate_color_variant_claid(
 
     print(f"    🤖 Claid.AI: загружаю фото...", end=" ", flush=True)
 
-    # Claid.AI требует публичный HTTP URL — временно загружаем на file.io
-    upload_resp = _requests.post(
-        "https://file.io",
-        files={"file": ("photo.jpg", image_bytes, "image/jpeg")},
-        data={"expires": "1h", "maxDownloads": "5", "autoDelete": "true"},
-        timeout=30,
-    )
-    if not upload_resp.ok:
-        raise RuntimeError(f"file.io upload failed {upload_resp.status_code}: {upload_resp.text[:200]}")
-    upload_data = upload_resp.json()
-    if not upload_data.get("success"):
-        raise RuntimeError(f"file.io error: {upload_data}")
-    public_url = upload_data["link"]
+    # Claid.AI требует публичный HTTP URL — временно загружаем на внешний хост
+    public_url = None
+    upload_errors = []
+
+    # 1) catbox.moe
+    try:
+        r = _requests.post(
+            "https://catbox.moe/user/api.php",
+            data={"reqtype": "fileupload"},
+            files={"fileToUpload": ("photo.jpg", image_bytes, "image/jpeg")},
+            timeout=30,
+        )
+        if r.ok and r.text.startswith("https://"):
+            public_url = r.text.strip()
+    except Exception as e:
+        upload_errors.append(f"catbox: {e}")
+
+    # 2) 0x0.st
+    if not public_url:
+        try:
+            r = _requests.post(
+                "https://0x0.st",
+                files={"file": ("photo.jpg", image_bytes, "image/jpeg")},
+                timeout=30,
+            )
+            if r.ok and r.text.strip().startswith("https://"):
+                public_url = r.text.strip()
+        except Exception as e:
+            upload_errors.append(f"0x0.st: {e}")
+
+    # 3) tmpfiles.org
+    if not public_url:
+        try:
+            r = _requests.post(
+                "https://tmpfiles.org/api/v1/upload",
+                files={"file": ("photo.jpg", image_bytes, "image/jpeg")},
+                timeout=30,
+            )
+            if r.ok:
+                d = r.json()
+                raw = d.get("data", {}).get("url", "")
+                # tmpfiles.org returns /file/... path, convert to direct /dl/ link
+                public_url = raw.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+        except Exception as e:
+            upload_errors.append(f"tmpfiles: {e}")
+
+    if not public_url:
+        raise RuntimeError(f"Не удалось загрузить фото на хостинг: {'; '.join(upload_errors)}")
+
     print(f"ок. Генерирую {COLOR_LABELS.get(color_name, color_name)}...", end=" ", flush=True)
 
     # Пробуем разные форматы операции для /v1-beta1/image/ai-edit
