@@ -3,14 +3,18 @@
 smart_photo_processor.py — Умный обработчик фото товаров для srlux.uz
 
 Использование:
-  pip install Pillow anthropic numpy
+  pip install Pillow anthropic numpy requests
   export ANTHROPIC_API_KEY="sk-ant-..."
+  export CLAID_API_KEY="90f366..."         # ключ Claid.AI (для AI-перекраски)
 
   # Базовая обработка:
   python smart_photo_processor.py --input ./исходные --output ./готовые --sku GZ2
 
-  # С генерацией цветовых вариантов (из белого фото):
+  # С локальной перекраской (numpy, быстро, бесплатно):
   python smart_photo_processor.py --input ./исходные --output ./готовые --sku GZ2 --colors white,anthracite,black
+
+  # С AI-перекраской через Claid.AI (фотореалистично, ~4 кредита/фото):
+  python smart_photo_processor.py --input ./исходные --output ./готовые --sku GZ2 --colors white,anthracite,black --claid
 
 Что делает:
   - Анализирует каждое фото через Claude Vision
@@ -21,6 +25,8 @@ smart_photo_processor.py — Умный обработчик фото товар
 
 import argparse
 import base64
+import io
+import os
 import sys
 from pathlib import Path
 
@@ -42,17 +48,50 @@ except ImportError:
     print("Установите anthropic: pip install anthropic")
     sys.exit(1)
 
-# ─── Цветовые варианты ───────────────────────────────────────────────────────
-# Каждый цвет задаётся как RGB максимальной яркости поверхности радиатора.
-# Алгоритм: яркость пикселя × (target_color / 255) = цвет пикселя варианта.
+try:
+    import requests as _requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
+
+# ─── Claid.AI ────────────────────────────────────────────────────────────────
+
+CLAID_BASE = "https://api.claid.ai"
+
+CLAID_PROMPTS = {
+    "anthracite": (
+        "Change the color of the radiator to dark anthracite gray (RAL 7016 charcoal). "
+        "Keep identical shape, section structure, metallic sheen, highlights, shadows, and lighting. "
+        "The background must remain pure white. Do not change anything except the color."
+    ),
+    "black": (
+        "Change the color of the radiator to deep matte black (RAL 9005). "
+        "Keep identical shape, section structure, metallic sheen, highlights, shadows, and lighting. "
+        "The background must remain pure white. Do not change anything except the color."
+    ),
+    "chrome": (
+        "Change the color of the radiator to polished chrome / brushed silver. "
+        "Keep identical shape, section structure, reflections, highlights, shadows, and lighting. "
+        "The background must remain pure white. Do not change anything except the finish."
+    ),
+    "gold": (
+        "Change the color of the radiator to brushed gold (warm champagne metallic). "
+        "Keep identical shape, section structure, metallic sheen, highlights, shadows, and lighting. "
+        "The background must remain pure white. Do not change anything except the color."
+    ),
+}
+
+# ─── Цветовые варианты (локальный numpy — быстро, бесплатно) ─────────────────
 
 COLOR_VARIANTS = {
-    "white":      (255, 255, 255),   # Белый — оригинал (без изменений)
-    "anthracite": (72,  74,  78),    # Антрацит — тёмно-серый (≈ RAL 7016)
-    "black":      (28,  28,  30),    # Чёрный — очень тёмный
-    "grey":       (155, 155, 158),   # Серый средний
-    "cream":      (245, 236, 218),   # Кремовый / Ivory
-    "bronze":     (120, 85,  55),    # Бронзовый
+    "white":      (255, 255, 255),
+    "anthracite": (72,  74,  78),
+    "black":      (28,  28,  30),
+    "grey":       (155, 155, 158),
+    "cream":      (245, 236, 218),
+    "bronze":     (120, 85,  55),
+    "chrome":     (192, 192, 192),
+    "gold":       (201, 162, 39),
 }
 
 COLOR_LABELS = {
@@ -62,6 +101,8 @@ COLOR_LABELS = {
     "grey":       "Серый",
     "cream":      "Кремовый",
     "bronze":     "Бронзовый",
+    "chrome":     "Хром",
+    "gold":       "Золото",
 }
 
 # ─── Профили обработки по типу фото ─────────────────────────────────────────
@@ -110,8 +151,135 @@ SUPPORTED = {".jpg", ".jpeg", ".jfif", ".jpe", ".png", ".webp", ".bmp", ".tiff",
 client = anthropic.Anthropic()
 
 
+# ─── Claid.AI AI-перекраска ───────────────────────────────────────────────────
+
+def _claid_upload_image(image_bytes: bytes, claid_key: str) -> str:
+    """Загружает файл в Claid.AI и возвращает URL для дальнейших операций."""
+    resp = _requests.post(
+        f"{CLAID_BASE}/v1-beta1/assets",
+        headers={"Authorization": f"Bearer {claid_key}"},
+        files={"file": ("photo.jpg", image_bytes, "image/jpeg")},
+        timeout=60,
+    )
+    if resp.status_code not in (200, 201):
+        raise RuntimeError(f"Claid upload error {resp.status_code}: {resp.text[:300]}")
+    data = resp.json()
+    # Claid.AI возвращает {"id": "...", "url": "..."}
+    return data.get("url") or data.get("tmp_url") or data["id"]
+
+
+def _claid_ai_photoshoot(input_url: str, prompt: str, claid_key: str) -> bytes:
+    """Вызывает AI Photoshoot и возвращает байты результирующего изображения."""
+    payload = {
+        "input": input_url,
+        "output": {
+            "format": {"type": "jpeg", "quality": 92},
+        },
+        "operations": {
+            "ai_photoshoot": {
+                "prompt": prompt,
+            }
+        },
+    }
+    resp = _requests.post(
+        f"{CLAID_BASE}/v1-beta1/image/edit",
+        headers={
+            "Authorization": f"Bearer {claid_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=180,
+    )
+    if resp.status_code not in (200, 201):
+        raise RuntimeError(f"Claid edit error {resp.status_code}: {resp.text[:400]}")
+
+    result = resp.json()
+    # Claid возвращает {"output": {"tmp_url": "..."}} или {"tmp_url": "..."}
+    output = result.get("output") or result
+    result_url = output.get("tmp_url") or output.get("url")
+    if not result_url:
+        raise RuntimeError(f"Claid.AI: no output URL in response: {result}")
+
+    img_resp = _requests.get(result_url, timeout=60)
+    img_resp.raise_for_status()
+    return img_resp.content
+
+
+def generate_color_variant_claid(
+    src_path: Path,
+    color_name: str,
+    claid_key: str,
+) -> Image.Image | None:
+    """
+    AI-перекраска через Claid.AI.
+    Возвращает PIL Image или None при ошибке (тогда используется numpy-метод).
+    """
+    if not HAS_REQUESTS:
+        print("    ⚠️  Установите requests: pip install requests")
+        return None
+
+    prompt = CLAID_PROMPTS.get(color_name)
+    if not prompt:
+        print(f"    ⚠️  Нет AI-промпта для цвета '{color_name}', используется локальный метод")
+        return None
+
+    with open(src_path, "rb") as f:
+        image_bytes = f.read()
+
+    print(f"    🤖 Claid.AI: загружаю фото...", end=" ", flush=True)
+    input_url = _claid_upload_image(image_bytes, claid_key)
+    print(f"загружено. Генерирую {COLOR_LABELS.get(color_name, color_name)}...", end=" ", flush=True)
+
+    result_bytes = _claid_ai_photoshoot(input_url, prompt, claid_key)
+    img = Image.open(io.BytesIO(result_bytes)).convert("RGB")
+    print("готово.")
+    return img
+
+
+# ─── Локальная numpy-перекраска ───────────────────────────────────────────────
+
+def generate_color_variant(img: Image.Image, color_rgb: tuple, bg_threshold: int = 238) -> Image.Image:
+    """
+    Перекрашивает радиатор в заданный цвет, сохраняя белый фон.
+
+    Алгоритм:
+      1. Маска фона: пиксели где все каналы > bg_threshold
+      2. Нормализация яркости пикселей радиатора в диапазон 0–1
+      3. Применяем целевой цвет: norm_яркость × target_color
+      4. Фон восстанавливается белым
+    """
+    arr = np.array(img.convert("RGB"), dtype=np.float32)
+
+    bg_mask = (arr[:, :, 0] > bg_threshold) & \
+              (arr[:, :, 1] > bg_threshold) & \
+              (arr[:, :, 2] > bg_threshold)
+
+    luminance = arr.mean(axis=2)
+
+    product_lum = luminance[~bg_mask]
+    if product_lum.size > 0:
+        lum_min = product_lum.min()
+        lum_max = product_lum.max()
+        if lum_max > lum_min:
+            norm = (luminance - lum_min) / (lum_max - lum_min)
+        else:
+            norm = luminance / 255.0
+    else:
+        norm = luminance / 255.0
+
+    result = np.zeros_like(arr)
+    result[:, :, 0] = norm * color_rgb[0]
+    result[:, :, 1] = norm * color_rgb[1]
+    result[:, :, 2] = norm * color_rgb[2]
+
+    result[bg_mask] = [255.0, 255.0, 255.0]
+
+    return Image.fromarray(result.clip(0, 255).astype(np.uint8), "RGB")
+
+
+# ─── Анализ фото через Claude Vision ─────────────────────────────────────────
+
 def analyze_photo(image_path: Path) -> str:
-    """Отправляет фото в Claude Vision, возвращает тип: main / detail / lifestyle."""
     with open(image_path, "rb") as f:
         image_data = base64.standard_b64encode(f.read()).decode("utf-8")
 
@@ -155,8 +323,9 @@ def analyze_photo(image_path: Path) -> str:
     return answer if answer in PROFILES else "main"
 
 
+# ─── Обработка изображений ────────────────────────────────────────────────────
+
 def process_image_main(img: Image.Image, profile: dict) -> Image.Image:
-    """Квадрат 800×800 с белым фоном и автообрезкой."""
     size = profile["size"]
     bg_color = profile["bg_color"]
 
@@ -185,7 +354,6 @@ def process_image_main(img: Image.Image, profile: dict) -> Image.Image:
 
 
 def process_image_rect(img: Image.Image, profile: dict) -> Image.Image:
-    """Прямоугольный формат для detail / lifestyle."""
     target_w, target_h = profile["size"]
     bg_color = profile["bg_color"]
 
@@ -221,51 +389,6 @@ def enhance_image(img: Image.Image, profile: dict) -> Image.Image:
     return img
 
 
-def generate_color_variant(img: Image.Image, color_rgb: tuple, bg_threshold: int = 238) -> Image.Image:
-    """
-    Перекрашивает радиатор в заданный цвет, сохраняя белый фон.
-
-    Алгоритм:
-      1. Маска фона: пиксели где все каналы > bg_threshold
-      2. Нормализация яркости пикселей радиатора в диапазон 0–1
-         (работает с исходником ЛЮБОГО цвета: белый, антрацит, чёрный)
-      3. Применяем целевой цвет: norm_яркость × target_color
-      4. Фон восстанавливается белым
-    """
-    arr = np.array(img.convert("RGB"), dtype=np.float32)
-
-    # Маска фона
-    bg_mask = (arr[:, :, 0] > bg_threshold) & \
-              (arr[:, :, 1] > bg_threshold) & \
-              (arr[:, :, 2] > bg_threshold)
-
-    # Яркость — среднее по каналам
-    luminance = arr.mean(axis=2)
-
-    # Нормализуем яркость только пикселей радиатора (не фона)
-    product_lum = luminance[~bg_mask]
-    if product_lum.size > 0:
-        lum_min = product_lum.min()
-        lum_max = product_lum.max()
-        if lum_max > lum_min:
-            norm = (luminance - lum_min) / (lum_max - lum_min)
-        else:
-            norm = luminance / 255.0
-    else:
-        norm = luminance / 255.0
-
-    # Применяем целевой цвет
-    result = np.zeros_like(arr)
-    result[:, :, 0] = norm * color_rgb[0]
-    result[:, :, 1] = norm * color_rgb[1]
-    result[:, :, 2] = norm * color_rgb[2]
-
-    # Восстанавливаем белый фон
-    result[bg_mask] = [255.0, 255.0, 255.0]
-
-    return Image.fromarray(result.clip(0, 255).astype(np.uint8), "RGB")
-
-
 def save_image(img: Image.Image, dst_dir: Path, name: str, profile: dict) -> int:
     webp_path = dst_dir / f"{name}.webp"
     jpg_path = dst_dir / f"{name}.jpg"
@@ -280,8 +403,9 @@ def process_photo(
     sku: str,
     index: int,
     colors: list[str] | None = None,
+    use_claid: bool = False,
+    claid_key: str | None = None,
 ) -> tuple[str, str]:
-    """Обрабатывает одно фото. Возвращает (photo_type, output_name)."""
     print(f"  🔍 Анализирую {src.name}...", end=" ", flush=True)
     photo_type = analyze_photo(src)
     profile = PROFILES[photo_type]
@@ -290,34 +414,44 @@ def process_photo(
     img = Image.open(src).convert("RGBA")
 
     if isinstance(profile["size"], int):
-        img = process_image_main(img, profile)
+        processed = process_image_main(img, profile)
     else:
-        img = process_image_rect(img, profile)
+        processed = process_image_rect(img, profile)
 
-    img = enhance_image(img, profile)
+    processed = enhance_image(processed, profile)
 
     count_same = len(list(dst_dir.glob(f"{sku}_{profile['suffix']}*.webp")))
     output_name = f"{sku}_{profile['suffix']}" if count_same == 0 \
         else f"{sku}_{profile['suffix']}_{count_same + 1}"
 
-    size_kb = save_image(img, dst_dir, output_name, profile)
+    size_kb = save_image(processed, dst_dir, output_name, profile)
     print(f"  ✅ → {output_name}.webp ({size_kb} KB)")
 
     # Цветовые варианты — только для основных фото (белый фон)
     if colors and photo_type == "main":
-        print(f"  🎨 Генерирую цветовые варианты...")
+        method = "Claid.AI" if (use_claid and claid_key) else "numpy"
+        print(f"  🎨 Генерирую цветовые варианты ({method})...")
+
         for color_name in colors:
-            if color_name not in COLOR_VARIANTS:
-                print(f"    ⚠️  Неизвестный цвет: {color_name}")
-                continue
-            color_rgb = COLOR_VARIANTS[color_name]
             label = COLOR_LABELS.get(color_name, color_name)
 
             if color_name == "white":
-                # Белый — это уже обработанное фото
-                colored = img
+                colored = processed
+            elif use_claid and claid_key and color_name in CLAID_PROMPTS:
+                try:
+                    colored = generate_color_variant_claid(src, color_name, claid_key)
+                    if colored is None:
+                        raise ValueError("Claid вернул None")
+                    # Приводим к тому же размеру что и processed
+                    colored = colored.resize(processed.size, Image.LANCZOS)
+                except Exception as e:
+                    print(f"    ⚠️  Claid.AI не сработал ({e}), использую numpy")
+                    colored = generate_color_variant(processed, COLOR_VARIANTS.get(color_name, (128, 128, 128)))
             else:
-                colored = generate_color_variant(img, color_rgb)
+                if color_name not in COLOR_VARIANTS:
+                    print(f"    ⚠️  Неизвестный цвет: {color_name}")
+                    continue
+                colored = generate_color_variant(processed, COLOR_VARIANTS[color_name])
 
             color_output = f"{sku}_{color_name}"
             ckb = save_image(colored, dst_dir, color_output, profile)
@@ -326,14 +460,15 @@ def process_photo(
     return photo_type, output_name
 
 
+# ─── SQL helper ───────────────────────────────────────────────────────────────
+
 def print_sql(sku: str, colors: list[str]) -> None:
-    """Выводит готовые SQL команды для обновления базы данных."""
     base_url = "https://srlux.uz/static/products"
     sku_upper = sku.upper()
 
-    print(f"\n{'─' * 55}")
+    print(f"\n{'─' * 60}")
     print("📋 SQL для обновления базы данных (скопируйте на сервер):")
-    print(f"{'─' * 55}")
+    print(f"{'─' * 60}")
 
     color_keywords = {
         "white":      ["White", "белый", "белая", "белое"],
@@ -342,29 +477,44 @@ def print_sql(sku: str, colors: list[str]) -> None:
         "grey":       ["Grey", "Gray", "серый"],
         "cream":      ["Cream", "Ivory", "кремовый"],
         "bronze":     ["Bronze", "бронза"],
+        "chrome":     ["Chrome", "хром"],
+        "gold":       ["Gold", "золото"],
     }
 
-    print("docker exec srlux-postgres psql -U srlux -d srlux_premium -c \"")
+    print('docker exec srlux-postgres psql -U srlux -d srlux_premium -c "')
     for color_name in colors:
         keywords = color_keywords.get(color_name, [color_name])
         conditions = " OR ".join(f"sku ILIKE '%{kw}%'" for kw in keywords)
-        print(f"UPDATE products SET image_url = '{base_url}/{sku_upper}_{color_name}.webp'")
+        print(f"UPDATE products SET image_url = '{base_url}/{sku_upper}/{sku_upper}_{color_name}.webp'")
         print(f"  WHERE sku LIKE '{sku_upper}%' AND ({conditions});")
-    print("\"")
+    print('"')
 
+
+# ─── Точка входа ─────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Умный обработчик фото для srlux.uz (Claude Vision + цветовые варианты)"
+        description="Умный обработчик фото для srlux.uz (Claude Vision + Claid.AI / numpy)"
     )
     parser.add_argument("--input",  default="./исходные", help="Папка с исходными фото")
     parser.add_argument("--output", default="./готовые",  help="Папка для готовых фото")
-    parser.add_argument("--sku",    required=True,         help="Артикул товара (напр. GZ2)")
+    parser.add_argument("--sku",    required=True,        help="Артикул товара (напр. GZ2)")
     parser.add_argument(
         "--colors",
         default=None,
-        help="Цветовые варианты через запятую: white,anthracite,black "
-             f"(доступны: {', '.join(COLOR_VARIANTS)})",
+        help=(
+            "Цветовые варианты через запятую: white,anthracite,black "
+            f"(доступны: {', '.join(COLOR_VARIANTS)})"
+        ),
+    )
+    parser.add_argument(
+        "--claid",
+        action="store_true",
+        help=(
+            "Использовать Claid.AI для фотореалистичной AI-перекраски "
+            "(требует CLAID_API_KEY в env, ~4 кредита/цвет). "
+            "Без этого флага — быстрый локальный numpy-метод."
+        ),
     )
     args = parser.parse_args()
 
@@ -372,6 +522,17 @@ def main():
     dst_dir = Path(args.output)
     sku = args.sku.upper().strip()
     colors = [c.strip().lower() for c in args.colors.split(",")] if args.colors else None
+
+    claid_key: str | None = None
+    if args.claid:
+        claid_key = os.environ.get("CLAID_API_KEY", "").strip()
+        if not claid_key:
+            print("❌ --claid указан, но CLAID_API_KEY не задан в env.")
+            print("   Задайте: export CLAID_API_KEY='ваш_ключ'")
+            sys.exit(1)
+        if not HAS_REQUESTS:
+            print("❌ Для --claid нужен requests: pip install requests")
+            sys.exit(1)
 
     if not src_dir.exists():
         print(f"❌ Папка не найдена: {src_dir}")
@@ -386,7 +547,8 @@ def main():
     print(f"\n📸 Умная обработка {len(files)} фото для товара {sku}")
     if colors:
         labels = [COLOR_LABELS.get(c, c) for c in colors]
-        print(f"   🎨 Цветовые варианты: {', '.join(labels)}")
+        method = "Claid.AI (AI)" if args.claid else "numpy (локально)"
+        print(f"   🎨 Цветовые варианты: {', '.join(labels)}  [{method}]")
     print(f"   Источник: {src_dir}  →  Результат: {dst_dir}\n")
 
     results = {"main": [], "detail": [], "lifestyle": []}
@@ -395,13 +557,17 @@ def main():
     for i, f in enumerate(files, 1):
         print(f"[{i}/{len(files)}] {f.name}")
         try:
-            photo_type, output_name = process_photo(f, dst_dir, sku, i, colors)
+            photo_type, output_name = process_photo(
+                f, dst_dir, sku, i, colors,
+                use_claid=args.claid,
+                claid_key=claid_key,
+            )
             results[photo_type].append(output_name)
         except Exception as e:
             print(f"  ❌ Ошибка: {e}")
             errors += 1
 
-    print(f"\n{'=' * 55}")
+    print(f"\n{'=' * 60}")
     print(f"Товар: {sku} | Обработано: {len(files) - errors}/{len(files)}")
     if errors:
         print(f"Ошибок: {errors}")
@@ -414,7 +580,7 @@ def main():
     if colors:
         print(f"\n🎨 Цветовые варианты:")
         for color_name in colors:
-            if color_name in COLOR_VARIANTS:
+            if color_name in COLOR_VARIANTS or color_name == "white":
                 print(f"  {sku}_{color_name}.webp — {COLOR_LABELS.get(color_name, color_name)}")
         print_sql(sku, colors)
 
