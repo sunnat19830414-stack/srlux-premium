@@ -180,45 +180,57 @@ def generate_color_variant_claid(
     with open(src_path, "rb") as f:
         image_bytes = f.read()
 
-    print(f"    🤖 Claid.AI: генерирую {COLOR_LABELS.get(color_name, color_name)}...", end=" ", flush=True)
+    print(f"    🤖 Claid.AI: загружаю фото...", end=" ", flush=True)
 
-    # Claid.AI /v1-beta1/image/ai-edit — multipart: image file + prompt text
-    attempts = [
-        # (files_dict, data_dict)
-        (
-            {"image": ("photo.jpg", image_bytes, "image/jpeg")},
-            {"prompt": prompt},
-        ),
-        (
-            {"file": ("photo.jpg", image_bytes, "image/jpeg")},
-            {"prompt": prompt},
-        ),
-        (
-            {"image": ("photo.jpg", image_bytes, "image/jpeg")},
-            {"data": json.dumps({"prompt": prompt, "output": {"format": {"type": "jpeg"}}})},
-        ),
+    # Claid.AI требует публичный HTTP URL — временно загружаем на file.io
+    upload_resp = _requests.post(
+        "https://file.io",
+        files={"file": ("photo.jpg", image_bytes, "image/jpeg")},
+        data={"expires": "1h", "maxDownloads": "5", "autoDelete": "true"},
+        timeout=30,
+    )
+    if not upload_resp.ok:
+        raise RuntimeError(f"file.io upload failed {upload_resp.status_code}: {upload_resp.text[:200]}")
+    upload_data = upload_resp.json()
+    if not upload_data.get("success"):
+        raise RuntimeError(f"file.io error: {upload_data}")
+    public_url = upload_data["link"]
+    print(f"ок. Генерирую {COLOR_LABELS.get(color_name, color_name)}...", end=" ", flush=True)
+
+    # Пробуем разные форматы операции для /v1-beta1/image/ai-edit
+    payloads = [
+        # Попытка 1: prompt на верхнем уровне
+        {"input": public_url, "prompt": prompt,
+         "output": {"format": {"type": "jpeg", "quality": 92}}},
+        # Попытка 2: operations.edit
+        {"input": public_url,
+         "output": {"format": {"type": "jpeg", "quality": 92}},
+         "operations": {"edit": {"prompt": prompt}}},
+        # Попытка 3: operations.recolor
+        {"input": public_url,
+         "output": {"format": {"type": "jpeg", "quality": 92}},
+         "operations": {"recolor": {"prompt": prompt}}},
     ]
 
     resp = None
-    for files_kw, data_kw in attempts:
+    last_err = ""
+    for payload in payloads:
         resp = _requests.post(
             f"{CLAID_BASE}/v1-beta1/image/ai-edit",
-            headers={"Authorization": f"Bearer {claid_key}"},
-            files=files_kw,
-            data=data_kw,
+            headers={"Authorization": f"Bearer {claid_key}",
+                     "Content-Type": "application/json"},
+            json=payload,
             timeout=180,
         )
-        if resp.status_code not in (400, 422):
-            break  # either success or non-validation error — stop trying
-        err = resp.json().get("error_details", {})
-        # If input field error persists, try next format; otherwise break
-        if "input" not in err and "image" not in err and "file" not in err:
+        if resp.status_code in (200, 201):
             break
+        last_err = resp.text[:300]
+        if resp.status_code not in (400, 422):
+            break  # server/auth error — stop
 
     if resp is None or resp.status_code not in (200, 201):
         code = resp.status_code if resp is not None else "?"
-        text = resp.text[:500] if resp is not None else ""
-        raise RuntimeError(f"Claid error {code}: {text}")
+        raise RuntimeError(f"Claid error {code}: {last_err}")
 
     result = resp.json()
     output = result.get("output") or result
