@@ -233,40 +233,26 @@ def generate_color_variant_claid(
 
     print(f"ок. Генерирую {COLOR_LABELS.get(color_name, color_name)}...", end=" ", flush=True)
 
-    # Пробуем разные форматы операции для /v1-beta1/image/ai-edit
-    # input должен быть объектом {"url": "..."}, а не просто строкой
+    # ai_photoshoot — единственная известная операция для /v1-beta1/image/ai-edit
+    # Используем реальный HTTP URL (catbox.moe)
     inp = {"url": public_url}
     out = {"format": {"type": "jpeg", "quality": 92}}
-    payloads = [
-        # Попытка 1: prompt на верхнем уровне (без operations)
-        {"input": inp, "prompt": prompt, "output": out},
-        # Попытка 2: operations.edit
-        {"input": inp, "output": out, "operations": {"edit": {"prompt": prompt}}},
-        # Попытка 3: operations.recolor
-        {"input": inp, "output": out, "operations": {"recolor": {"prompt": prompt}}},
-        # Попытка 4: operations.generative_fill
-        {"input": inp, "output": out, "operations": {"generative_fill": {"prompt": prompt}}},
-    ]
+    payload = {
+        "input": inp,
+        "output": out,
+        "operations": {"ai_photoshoot": {"prompt": prompt}},
+    }
 
-    resp = None
-    last_err = ""
-    for payload in payloads:
-        resp = _requests.post(
-            f"{CLAID_BASE}/v1-beta1/image/ai-edit",
-            headers={"Authorization": f"Bearer {claid_key}",
-                     "Content-Type": "application/json"},
-            json=payload,
-            timeout=180,
-        )
-        if resp.status_code in (200, 201):
-            break
-        last_err = resp.text[:300]
-        if resp.status_code not in (400, 422):
-            break  # server/auth error — stop
+    resp = _requests.post(
+        f"{CLAID_BASE}/v1-beta1/image/ai-edit",
+        headers={"Authorization": f"Bearer {claid_key}",
+                 "Content-Type": "application/json"},
+        json=payload,
+        timeout=180,
+    )
 
-    if resp is None or resp.status_code not in (200, 201):
-        code = resp.status_code if resp is not None else "?"
-        raise RuntimeError(f"Claid error {code}: {last_err}")
+    if resp.status_code not in (200, 201):
+        raise RuntimeError(f"Claid error {resp.status_code}: {resp.text[:500]}")
 
     result = resp.json()
     output = result.get("output") or result
