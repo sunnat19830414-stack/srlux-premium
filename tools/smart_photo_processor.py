@@ -5,16 +5,16 @@ smart_photo_processor.py — Умный обработчик фото товар
 Использование:
   pip install Pillow anthropic numpy requests
   export ANTHROPIC_API_KEY="sk-ant-..."
-  export CLAID_API_KEY="90f366..."         # ключ Claid.AI (для AI-перекраски)
+  export PHOTOROOM_API_KEY="sandbox_sk_pr_default_..."  # ключ Photoroom
 
-  # Базовая обработка:
+  # Базовая обработка (без AI):
   python smart_photo_processor.py --input ./исходные --output ./готовые --sku GZ2
 
   # С локальной перекраской (numpy, быстро, бесплатно):
   python smart_photo_processor.py --input ./исходные --output ./готовые --sku GZ2 --colors white,anthracite,black
 
-  # С AI-перекраской через Claid.AI (фотореалистично, ~4 кредита/фото):
-  python smart_photo_processor.py --input ./исходные --output ./готовые --sku GZ2 --colors white,anthracite,black --claid
+  # С AI-перекраской через Photoroom (фотореалистично, ~1 кредит/цвет):
+  python smart_photo_processor.py --input ./исходные --output ./готовые --sku GZ2 --colors white,anthracite,black --photoroom
 
 Что делает:
   - Анализирует каждое фото через Claude Vision
@@ -266,6 +266,87 @@ def generate_color_variant_claid(
     return Image.open(io.BytesIO(img_resp.content)).convert("RGB")
 
 
+# ─── Photoroom API ───────────────────────────────────────────────────────────
+
+PHOTOROOM_BASE = "https://image-api.photoroom.com"
+
+PHOTOROOM_COLORS = {
+    "white":      "#FFFFFF",
+    "anthracite": "#484A4E",
+    "black":      "#1C1C1E",
+    "chrome":     "#C0C0C0",
+    "gold":       "#C9A227",
+}
+
+PHOTOROOM_PROMPTS = {
+    "white":      "Change the color of the radiator to pure white, keep shape and texture",
+    "anthracite": "Change the color of the radiator to dark anthracite gray RAL 7016, keep shape and texture",
+    "black":      "Change the color of the radiator to matte black RAL 9005, keep shape and texture",
+    "chrome":     "Change the color of the radiator to polished chrome silver, keep shape and texture",
+    "gold":       "Change the color of the radiator to brushed gold, keep shape and texture",
+}
+
+
+def generate_color_variant_photoroom(
+    src_path: Path,
+    color_name: str,
+    photoroom_key: str,
+) -> Image.Image | None:
+    """AI-перекраска через Photoroom API /v2/edit."""
+    if not HAS_REQUESTS:
+        return None
+
+    color_hex = PHOTOROOM_COLORS.get(color_name)
+    prompt    = PHOTOROOM_PROMPTS.get(color_name)
+    if not color_hex:
+        return None
+
+    with open(src_path, "rb") as f:
+        image_bytes = f.read()
+
+    print(f"    🖼️  Photoroom: генерирую {COLOR_LABELS.get(color_name, color_name)}...", end=" ", flush=True)
+
+    # Попытка 1: GenAI prompt editing (если доступно)
+    if prompt:
+        resp = _requests.post(
+            f"{PHOTOROOM_BASE}/v2/edit",
+            headers={"x-api-key": photoroom_key},
+            files={"imageFile": ("photo.jpg", image_bytes, "image/jpeg")},
+            data={
+                "editWithAI.mode": "generativeEdit",
+                "editWithAI.prompt": prompt,
+                "background.color": "#FFFFFF",
+            },
+            timeout=120,
+        )
+        if resp.status_code == 200:
+            print("готово.")
+            return Image.open(io.BytesIO(resp.content)).convert("RGB")
+        # Если GenAI не доступен — пробуем прямую перекраску
+        err1 = resp.text[:200]
+    else:
+        err1 = "no prompt"
+
+    # Попытка 2: productRecolor (цветовая замена без генерации)
+    resp = _requests.post(
+        f"{PHOTOROOM_BASE}/v2/edit",
+        headers={"x-api-key": photoroom_key},
+        files={"imageFile": ("photo.jpg", image_bytes, "image/jpeg")},
+        data={
+            "productRecolor.colors": color_hex,
+            "background.color": "#FFFFFF",
+        },
+        timeout=120,
+    )
+    if resp.status_code == 200:
+        print("готово.")
+        return Image.open(io.BytesIO(resp.content)).convert("RGB")
+
+    raise RuntimeError(
+        f"Photoroom error {resp.status_code}: {resp.text[:300]} | attempt1: {err1}"
+    )
+
+
 # ─── Локальная numpy-перекраска ───────────────────────────────────────────────
 
 def generate_color_variant(img: Image.Image, color_rgb: tuple, bg_threshold: int = 238) -> Image.Image:
@@ -435,6 +516,8 @@ def process_photo(
     colors: list[str] | None = None,
     use_claid: bool = False,
     claid_key: str | None = None,
+    use_photoroom: bool = False,
+    photoroom_key: str | None = None,
     force_main: bool = False,
 ) -> tuple[str, str]:
     if force_main:
@@ -465,23 +548,37 @@ def process_photo(
 
     # Цветовые варианты — только для основных фото (белый фон)
     if colors and photo_type == "main":
-        method = "Claid.AI" if (use_claid and claid_key) else "numpy"
+        if use_photoroom and photoroom_key:
+            method = "Photoroom AI"
+        elif use_claid and claid_key:
+            method = "Claid.AI"
+        else:
+            method = "numpy"
         print(f"  🎨 Генерирую цветовые варианты ({method})...")
 
         for color_name in colors:
             label = COLOR_LABELS.get(color_name, color_name)
+            colored = None
 
-            if use_claid and claid_key and color_name in CLAID_PROMPTS:
+            if use_photoroom and photoroom_key:
+                try:
+                    colored = generate_color_variant_photoroom(src, color_name, photoroom_key)
+                    if colored is not None:
+                        colored = colored.resize(processed.size, Image.LANCZOS)
+                except Exception as e:
+                    print(f"    ⚠️  Photoroom не сработал ({e}), использую numpy")
+                    colored = None
+
+            elif use_claid and claid_key and color_name in CLAID_PROMPTS:
                 try:
                     colored = generate_color_variant_claid(src, color_name, claid_key)
-                    if colored is None:
-                        raise ValueError("Claid вернул None")
-                    # Приводим к тому же размеру что и processed
-                    colored = colored.resize(processed.size, Image.LANCZOS)
+                    if colored is not None:
+                        colored = colored.resize(processed.size, Image.LANCZOS)
                 except Exception as e:
                     print(f"    ⚠️  Claid.AI не сработал ({e}), использую numpy")
-                    colored = generate_color_variant(processed, COLOR_VARIANTS.get(color_name, (128, 128, 128)))
-            else:
+                    colored = None
+
+            if colored is None:
                 if color_name not in COLOR_VARIANTS:
                     print(f"    ⚠️  Неизвестный цвет: {color_name}")
                     continue
@@ -528,7 +625,7 @@ def print_sql(sku: str, colors: list[str]) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Умный обработчик фото для srlux.uz (Claude Vision + Claid.AI / numpy)"
+        description="Умный обработчик фото для srlux.uz (Claude Vision + Photoroom / numpy)"
     )
     parser.add_argument("--input",  default="./исходные", help="Папка с исходными фото")
     parser.add_argument("--output", default="./готовые",  help="Папка для готовых фото")
@@ -544,16 +641,17 @@ def main():
     parser.add_argument(
         "--force-main",
         action="store_true",
-        help="Принудительно обрабатывать все фото как тип 'main' (пропустить Claude Vision анализ) и генерировать цветовые варианты.",
+        help="Принудительно обрабатывать все фото как тип 'main' (пропустить анализ).",
+    )
+    parser.add_argument(
+        "--photoroom",
+        action="store_true",
+        help="Использовать Photoroom AI для перекраски (требует PHOTOROOM_API_KEY в env).",
     )
     parser.add_argument(
         "--claid",
         action="store_true",
-        help=(
-            "Использовать Claid.AI для фотореалистичной AI-перекраски "
-            "(требует CLAID_API_KEY в env, ~4 кредита/цвет). "
-            "Без этого флага — быстрый локальный numpy-метод."
-        ),
+        help="Использовать Claid.AI (требует CLAID_API_KEY в env).",
     )
     args = parser.parse_args()
 
@@ -562,15 +660,22 @@ def main():
     sku = args.sku.upper().strip()
     colors = [c.strip().lower() for c in args.colors.split(",")] if args.colors else None
 
+    photoroom_key: str | None = None
+    if args.photoroom:
+        photoroom_key = os.environ.get("PHOTOROOM_API_KEY", "").strip()
+        if not photoroom_key:
+            print("❌ --photoroom указан, но PHOTOROOM_API_KEY не задан в env.")
+            print("   Задайте: $env:PHOTOROOM_API_KEY='ваш_ключ'")
+            sys.exit(1)
+        if not HAS_REQUESTS:
+            print("❌ Нужен requests: pip install requests")
+            sys.exit(1)
+
     claid_key: str | None = None
     if args.claid:
         claid_key = os.environ.get("CLAID_API_KEY", "").strip()
         if not claid_key:
             print("❌ --claid указан, но CLAID_API_KEY не задан в env.")
-            print("   Задайте: export CLAID_API_KEY='ваш_ключ'")
-            sys.exit(1)
-        if not HAS_REQUESTS:
-            print("❌ Для --claid нужен requests: pip install requests")
             sys.exit(1)
 
     if not src_dir.exists():
@@ -586,7 +691,12 @@ def main():
     print(f"\n📸 Умная обработка {len(files)} фото для товара {sku}")
     if colors:
         labels = [COLOR_LABELS.get(c, c) for c in colors]
-        method = "Claid.AI (AI)" if args.claid else "numpy (локально)"
+        if args.photoroom:
+            method = "Photoroom AI"
+        elif args.claid:
+            method = "Claid.AI"
+        else:
+            method = "numpy (локально)"
         print(f"   🎨 Цветовые варианты: {', '.join(labels)}  [{method}]")
     print(f"   Источник: {src_dir}  →  Результат: {dst_dir}\n")
 
@@ -600,6 +710,8 @@ def main():
                 f, dst_dir, sku, i, colors,
                 use_claid=args.claid,
                 claid_key=claid_key,
+                use_photoroom=args.photoroom,
+                photoroom_key=photoroom_key,
                 force_main=args.force_main,
             )
             results[photo_type].append(output_name)
