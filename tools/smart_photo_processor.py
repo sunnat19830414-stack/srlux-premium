@@ -500,6 +500,48 @@ def enhance_image(img: Image.Image, profile: dict) -> Image.Image:
     return img
 
 
+def apply_custom_background(
+    product_img: Image.Image,
+    bg_path: Path,
+    padding_pct: float = 0.08,
+) -> Image.Image:
+    """
+    Вырезает белый фон у продукта и накладывает его на брендовый фон.
+    Работает локально через PIL, без API.
+    """
+    bg = Image.open(bg_path).convert("RGBA")
+    product = product_img.convert("RGBA")
+
+    # Делаем белые пиксели прозрачными
+    arr = np.array(product, dtype=np.float32)
+    r, g, b, a = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2], arr[:, :, 3]
+    white_mask = (r > 230) & (g > 230) & (b > 230)
+    arr[:, :, 3] = np.where(white_mask, 0, 255)
+    product = Image.fromarray(arr.clip(0, 255).astype(np.uint8), "RGBA")
+
+    # Подрезаем по bbox продукта
+    bbox = product.getbbox()
+    if bbox:
+        product = product.crop(bbox)
+
+    # Масштабируем фон под квадрат 800×800
+    size = 800
+    bg = bg.resize((size, size), Image.LANCZOS)
+
+    # Вписываем продукт с отступом
+    pad = int(size * padding_pct)
+    max_size = size - pad * 2
+    product.thumbnail((max_size, max_size), Image.LANCZOS)
+
+    # Центрируем продукт на фоне
+    offset_x = (size - product.width) // 2
+    offset_y = (size - product.height) // 2
+    canvas = bg.copy()
+    canvas.paste(product, (offset_x, offset_y), mask=product.split()[3])
+
+    return canvas.convert("RGB")
+
+
 def save_image(img: Image.Image, dst_dir: Path, name: str, profile: dict) -> int:
     webp_path = dst_dir / f"{name}.webp"
     jpg_path = dst_dir / f"{name}.jpg"
@@ -519,6 +561,7 @@ def process_photo(
     use_photoroom: bool = False,
     photoroom_key: str | None = None,
     force_main: bool = False,
+    bg_path: Path | None = None,
 ) -> tuple[str, str]:
     if force_main:
         photo_type = "main"
@@ -588,6 +631,26 @@ def process_photo(
             ckb = save_image(colored, dst_dir, color_output, profile)
             print(f"    ✅ {color_output}.webp ({ckb} KB) — {label}")
 
+            # Брендовый фон
+            if bg_path:
+                try:
+                    branded = apply_custom_background(colored, bg_path)
+                    bg_output = f"{sku}_{color_name}_bg"
+                    bkb = save_image(branded, dst_dir, bg_output, profile)
+                    print(f"    🖼️  {bg_output}.webp ({bkb} KB) — {label} + фон")
+                except Exception as e:
+                    print(f"    ⚠️  Фон не применился: {e}")
+
+    # Брендовый фон для main фото (без цвета)
+    if bg_path and not colors:
+        try:
+            branded = apply_custom_background(processed, bg_path)
+            bg_output = f"{sku}_main_bg"
+            bkb = save_image(branded, dst_dir, bg_output, profile)
+            print(f"  🖼️  {bg_output}.webp ({bkb} KB) — main + фон")
+        except Exception as e:
+            print(f"  ⚠️  Фон не применился: {e}")
+
     return photo_type, output_name
 
 
@@ -642,6 +705,12 @@ def main():
         "--force-main",
         action="store_true",
         help="Принудительно обрабатывать все фото как тип 'main' (пропустить анализ).",
+    )
+    parser.add_argument(
+        "--bg",
+        default=None,
+        help="Путь к фоновому изображению (напр. ./фон.jpg). "
+             "Генерирует GZ3_white_bg.webp, GZ3_anthracite_bg.webp и т.д.",
     )
     parser.add_argument(
         "--photoroom",
@@ -706,6 +775,7 @@ def main():
     for i, f in enumerate(files, 1):
         print(f"[{i}/{len(files)}] {f.name}")
         try:
+            bg_path = Path(args.bg) if args.bg else None
             photo_type, output_name = process_photo(
                 f, dst_dir, sku, i, colors,
                 use_claid=args.claid,
@@ -713,6 +783,7 @@ def main():
                 use_photoroom=args.photoroom,
                 photoroom_key=photoroom_key,
                 force_main=args.force_main,
+                bg_path=bg_path,
             )
             results[photo_type].append(output_name)
         except Exception as e:
