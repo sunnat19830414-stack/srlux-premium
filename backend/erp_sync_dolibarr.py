@@ -21,7 +21,7 @@ logger = logging.getLogger("erp_sync")
 DOLIBARR_URL = os.getenv("DOLIBARR_API_URL", "https://bollente.uz/api/index.php/").rstrip("/")
 DOLIBARR_KEY = os.getenv("DOLIBARR_API_KEY", "")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://api:8000")
-ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "srlux_admin_secret_key")
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 
 # Dolibarr prices are in USD — always convert to UZS
 DOLIBARR_DEFAULT_CURRENCY = os.getenv("DOLIBARR_DEFAULT_CURRENCY", "USD")

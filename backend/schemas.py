@@ -1,5 +1,6 @@
 from __future__ import annotations
 import re
+from datetime import datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -187,3 +188,107 @@ class OrderOut(BaseModel):
     total_uzs: Decimal
     status: str
     items: List[OrderItemOut] = []
+
+
+# ── Admin panel ────────────────────────────────────────────────────────────────
+
+class AdminOrderItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    product_name_snapshot: str
+    quantity: int
+    unit_price_snapshot: Decimal
+
+
+class AdminOrderOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    order_number: str
+    customer_name: str
+    customer_phone: str
+    customer_address: Optional[str]
+    total_uzs: Decimal
+    status: str
+    created_at: datetime
+    items: List[AdminOrderItemOut] = []
+
+
+class AdminOrderListOut(BaseModel):
+    total: int
+    page: int
+    limit: int
+    orders: List[AdminOrderOut]
+
+
+class OrderStatusUpdate(BaseModel):
+    status: str = Field(..., pattern="^(pending|processing|completed|cancelled)$")
+
+
+class AdminProductOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    sku: str
+    name_ru: str
+    price_uzs: Decimal
+    stock: int
+    is_active: bool
+    image_url: Optional[str]
+    category_id: Optional[int]
+    parent_model: Optional[str]
+    color: Optional[str]
+
+
+class AdminProductListOut(BaseModel):
+    total: int
+    page: int
+    limit: int
+    products: List[AdminProductOut]
+
+
+class ProductUpdateIn(BaseModel):
+    name_ru: Optional[str] = Field(None, min_length=1, max_length=500)
+    description_ru: Optional[str] = Field(None, max_length=10000)
+    price_uzs: Optional[Decimal] = Field(None, gt=0)
+    image_url: Optional[str] = Field(None, max_length=1000)
+    is_active: Optional[bool] = None
+    category_id: Optional[int] = Field(None, gt=0)
+
+
+class AdminCategoryOut(BaseModel):
+    id: int
+    slug: str
+    name_ru: str
+    name_uz: str
+    icon: str
+    dolibarr_id: Optional[int]
+    product_count: int
+
+
+class CategoryCreateIn(BaseModel):
+    name_ru: str = Field(..., min_length=1, max_length=500)
+    name_uz: str = Field(..., min_length=1, max_length=500)
+    icon: str = Field("Package", max_length=100)
+
+
+class CategoryUpdateIn(BaseModel):
+    name_ru: Optional[str] = Field(None, min_length=1, max_length=500)
+    name_uz: Optional[str] = Field(None, min_length=1, max_length=500)
+    icon: Optional[str] = Field(None, max_length=100)
+
+
+class AdminStatsOut(BaseModel):
+    total_orders: int
+    orders_today: int
+    orders_this_week: int
+    total_revenue: Decimal
+    total_products: int
+    active_products: int
+    total_categories: int
+    pending_orders: int
+
+
+class SyncStatusOut(BaseModel):
+    running: bool
+    last_run: Optional[str]
+    last_result: Optional[str]
+    last_success: bool

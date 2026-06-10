@@ -1,12 +1,32 @@
+import asyncio
 import logging
 import os
+import subprocess
+from datetime import datetime
+from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import crud
 from database import get_db
-from schemas import BulkCategoriesIn, BulkCategoriesOut, BulkImportIn, BulkImportOut
+from schemas import (
+    AdminCategoryOut,
+    AdminOrderListOut,
+    AdminOrderOut,
+    AdminProductListOut,
+    AdminProductOut,
+    AdminStatsOut,
+    BulkCategoriesIn,
+    BulkCategoriesOut,
+    BulkImportIn,
+    BulkImportOut,
+    CategoryCreateIn,
+    CategoryUpdateIn,
+    OrderStatusUpdate,
+    ProductUpdateIn,
+    SyncStatusOut,
+)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 logger = logging.getLogger(__name__)
@@ -15,50 +35,176 @@ ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
 if not ADMIN_API_KEY:
     raise RuntimeError("ADMIN_API_KEY env var is required but not set")
 
+# In-memory sync state (resets on restart — acceptable for single instance)
+_sync_state: dict = {"running": False, "last_run": None, "last_result": None, "last_success": True}
+
 
 def _require_api_key(request: Request, x_api_key: str = Header(...)):
     if x_api_key != ADMIN_API_KEY:
         logger.warning(
-            "Admin auth failed: invalid key from IP %s",
+            "Admin auth failed from IP %s",
             request.client.host if request.client else "unknown",
         )
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-@router.post(
-    "/categories/bulk",
-    response_model=BulkCategoriesOut,
-    dependencies=[Depends(_require_api_key)],
-)
-async def bulk_import_categories(
-    request: Request,
-    data: BulkCategoriesIn,
-    db: AsyncSession = Depends(get_db),
-):
+# ── Legacy bulk import (used by Dolibarr sync cron) ───────────────────────────
+
+@router.post("/categories/bulk", response_model=BulkCategoriesOut, dependencies=[Depends(_require_api_key)])
+async def bulk_import_categories(request: Request, data: BulkCategoriesIn, db: AsyncSession = Depends(get_db)):
     result = await crud.bulk_upsert_categories(db, data.categories)
-    logger.info(
-        "Admin bulk categories: upserted=%d from IP %s",
-        result["upserted"],
-        request.client.host if request.client else "unknown",
-    )
+    logger.info("Admin bulk categories: upserted=%d from IP %s", result["upserted"], request.client.host if request.client else "unknown")
     return BulkCategoriesOut(**result)
 
 
-@router.post(
-    "/products/bulk",
-    response_model=BulkImportOut,
-    dependencies=[Depends(_require_api_key)],
-)
-async def bulk_import_products(
-    request: Request,
-    data: BulkImportIn,
+@router.post("/products/bulk", response_model=BulkImportOut, dependencies=[Depends(_require_api_key)])
+async def bulk_import_products(request: Request, data: BulkImportIn, db: AsyncSession = Depends(get_db)):
+    result = await crud.bulk_upsert_products(db, data.products)
+    logger.info("Admin bulk products: upserted=%d skipped=%d from IP %s", result["upserted"], result["skipped"], request.client.host if request.client else "unknown")
+    return BulkImportOut(**result)
+
+
+# ── Admin panel: stats ─────────────────────────────────────────────────────────
+
+@router.get("/stats", response_model=AdminStatsOut, dependencies=[Depends(_require_api_key)])
+async def get_stats(db: AsyncSession = Depends(get_db)):
+    return await crud.admin_get_stats(db)
+
+
+# ── Admin panel: orders ────────────────────────────────────────────────────────
+
+@router.get("/orders", response_model=AdminOrderListOut, dependencies=[Depends(_require_api_key)])
+async def list_orders(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    status: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await crud.bulk_upsert_products(db, data.products)
-    logger.info(
-        "Admin bulk products: upserted=%d skipped=%d from IP %s",
-        result["upserted"],
-        result["skipped"],
-        request.client.host if request.client else "unknown",
-    )
-    return BulkImportOut(**result)
+    total, orders = await crud.admin_list_orders(db, page=page, limit=limit, status=status)
+    return AdminOrderListOut(total=total, page=page, limit=limit, orders=orders)
+
+
+@router.get("/orders/{order_id}", response_model=AdminOrderOut, dependencies=[Depends(_require_api_key)])
+async def get_order(order_id: int, db: AsyncSession = Depends(get_db)):
+    order = await crud.admin_get_order(db, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return order
+
+
+@router.patch("/orders/{order_id}/status", response_model=AdminOrderOut, dependencies=[Depends(_require_api_key)])
+async def update_order_status(order_id: int, data: OrderStatusUpdate, db: AsyncSession = Depends(get_db)):
+    order = await crud.admin_update_order_status(db, order_id, data.status)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    logger.info("Order %d status → %s", order_id, data.status)
+    return order
+
+
+# ── Admin panel: products ──────────────────────────────────────────────────────
+
+@router.get("/products", response_model=AdminProductListOut, dependencies=[Depends(_require_api_key)])
+async def list_products_admin(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    search: Optional[str] = Query(None, max_length=200),
+    is_active: Optional[bool] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    total, products = await crud.admin_list_products(db, page=page, limit=limit, search=search, is_active=is_active)
+    return AdminProductListOut(total=total, page=page, limit=limit, products=products)
+
+
+@router.patch("/products/{product_id}", response_model=AdminProductOut, dependencies=[Depends(_require_api_key)])
+async def update_product(product_id: int, data: ProductUpdateIn, db: AsyncSession = Depends(get_db)):
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    product = await crud.admin_update_product(db, product_id, updates)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    logger.info("Product %d updated: %s", product_id, list(updates.keys()))
+    return product
+
+
+# ── Admin panel: categories ────────────────────────────────────────────────────
+
+@router.get("/categories-list", response_model=list[AdminCategoryOut], dependencies=[Depends(_require_api_key)])
+async def list_categories_admin(db: AsyncSession = Depends(get_db)):
+    rows = await crud.admin_list_categories(db)
+    return [
+        AdminCategoryOut(
+            id=cat.id,
+            slug=cat.slug,
+            name_ru=cat.name_ru,
+            name_uz=cat.name_uz,
+            icon=cat.icon,
+            dolibarr_id=cat.dolibarr_id,
+            product_count=count,
+        )
+        for cat, count in rows
+    ]
+
+
+@router.post("/categories-list", response_model=AdminCategoryOut, dependencies=[Depends(_require_api_key)])
+async def create_category(data: CategoryCreateIn, db: AsyncSession = Depends(get_db)):
+    cat = await crud.admin_create_category(db, data.name_ru, data.name_uz, data.icon)
+    return AdminCategoryOut(id=cat.id, slug=cat.slug, name_ru=cat.name_ru, name_uz=cat.name_uz, icon=cat.icon, dolibarr_id=cat.dolibarr_id, product_count=0)
+
+
+@router.patch("/categories-list/{cat_id}", response_model=AdminCategoryOut, dependencies=[Depends(_require_api_key)])
+async def update_category(cat_id: int, data: CategoryUpdateIn, db: AsyncSession = Depends(get_db)):
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    cat = await crud.admin_update_category(db, cat_id, updates)
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    rows = await crud.admin_list_categories(db)
+    count = next((c for _, c in rows if _ .id == cat_id), 0)
+    return AdminCategoryOut(id=cat.id, slug=cat.slug, name_ru=cat.name_ru, name_uz=cat.name_uz, icon=cat.icon, dolibarr_id=cat.dolibarr_id, product_count=count)
+
+
+@router.delete("/categories-list/{cat_id}", dependencies=[Depends(_require_api_key)])
+async def delete_category(cat_id: int, db: AsyncSession = Depends(get_db)):
+    result = await crud.admin_delete_category(db, cat_id)
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail="Category not found")
+    if result == "has_products":
+        raise HTTPException(status_code=409, detail="Cannot delete category with products")
+    logger.info("Category %d deleted", cat_id)
+    return {"ok": True}
+
+
+# ── Admin panel: sync ──────────────────────────────────────────────────────────
+
+@router.get("/sync/status", response_model=SyncStatusOut, dependencies=[Depends(_require_api_key)])
+async def sync_status():
+    return SyncStatusOut(**_sync_state)
+
+
+@router.post("/sync/trigger", response_model=SyncStatusOut, dependencies=[Depends(_require_api_key)])
+async def trigger_sync():
+    if _sync_state["running"]:
+        return SyncStatusOut(**_sync_state)
+
+    async def _run():
+        _sync_state["running"] = True
+        _sync_state["last_run"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "python3", "/app/erp_sync_dolibarr.py",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=300)
+            output = stdout.decode()[-500:] if stdout else ""
+            success = proc.returncode == 0
+            _sync_state["last_result"] = output
+            _sync_state["last_success"] = success
+            logger.info("Sync finished: returncode=%d", proc.returncode)
+        except Exception as e:
+            _sync_state["last_result"] = str(e)[:300]
+            _sync_state["last_success"] = False
+            logger.error("Sync error: %s", e)
+        finally:
+            _sync_state["running"] = False
+
+    asyncio.create_task(_run())
+    return SyncStatusOut(**_sync_state)

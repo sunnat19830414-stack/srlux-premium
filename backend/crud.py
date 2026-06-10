@@ -260,6 +260,185 @@ async def bulk_upsert_products(db: AsyncSession, items: list) -> dict:
 import uuid
 
 
+# ── Admin: orders ──────────────────────────────────────────────────────────────
+
+async def admin_list_orders(
+    db: AsyncSession,
+    page: int = 1,
+    limit: int = 20,
+    status: Optional[str] = None,
+):
+    q = (
+        select(Order)
+        .options(selectinload(Order.items))
+        .order_by(Order.created_at.desc())
+    )
+    if status:
+        q = q.where(Order.status == status)
+    count_q = select(func.count()).select_from(q.subquery())
+    total = await db.scalar(count_q) or 0
+    result = await db.execute(q.offset((page - 1) * limit).limit(limit))
+    return total, result.scalars().all()
+
+
+async def admin_get_order(db: AsyncSession, order_id: int):
+    result = await db.execute(
+        select(Order)
+        .where(Order.id == order_id)
+        .options(selectinload(Order.items))
+    )
+    return result.scalar_one_or_none()
+
+
+async def admin_update_order_status(db: AsyncSession, order_id: int, status: str):
+    order = await db.scalar(select(Order).where(Order.id == order_id))
+    if not order:
+        return None
+    order.status = status
+    await db.commit()
+    await db.refresh(order)
+    return order
+
+
+# ── Admin: products ────────────────────────────────────────────────────────────
+
+async def admin_list_products(
+    db: AsyncSession,
+    page: int = 1,
+    limit: int = 50,
+    search: Optional[str] = None,
+    is_active: Optional[bool] = None,
+):
+    q = select(Product).order_by(Product.id)
+    if search:
+        q = q.where(
+            Product.name_ru.ilike(f"%{search}%") | Product.sku.ilike(f"%{search}%")
+        )
+    if is_active is not None:
+        q = q.where(Product.is_active == is_active)
+    count_q = select(func.count()).select_from(q.subquery())
+    total = await db.scalar(count_q) or 0
+    result = await db.execute(q.offset((page - 1) * limit).limit(limit))
+    return total, result.scalars().all()
+
+
+async def admin_update_product(db: AsyncSession, product_id: int, updates: dict):
+    product = await db.scalar(select(Product).where(Product.id == product_id))
+    if not product:
+        return None
+    for key, value in updates.items():
+        setattr(product, key, value)
+    await db.commit()
+    await db.refresh(product)
+    return product
+
+
+# ── Admin: categories ──────────────────────────────────────────────────────────
+
+async def admin_list_categories(db: AsyncSession):
+    result = await db.execute(
+        select(
+            Category,
+            func.count(Product.id).label("product_count"),
+        )
+        .outerjoin(Product, Product.category_id == Category.id)
+        .group_by(Category.id)
+        .order_by(Category.name_ru)
+    )
+    return result.all()
+
+
+async def admin_create_category(
+    db: AsyncSession, name_ru: str, name_uz: str, icon: str
+):
+    slug = _slugify(name_ru)
+    slug = await _unique_slug(db, Category, slug)
+    cat = Category(
+        slug=slug, name_ru=name_ru, name_uz=name_uz, icon=icon, dolibarr_id=None
+    )
+    db.add(cat)
+    await db.commit()
+    await db.refresh(cat)
+    return cat
+
+
+async def admin_update_category(db: AsyncSession, cat_id: int, updates: dict):
+    cat = await db.scalar(select(Category).where(Category.id == cat_id))
+    if not cat:
+        return None
+    for key, value in updates.items():
+        setattr(cat, key, value)
+    await db.commit()
+    await db.refresh(cat)
+    return cat
+
+
+async def admin_delete_category(db: AsyncSession, cat_id: int) -> str:
+    cat = await db.scalar(select(Category).where(Category.id == cat_id))
+    if not cat:
+        return "not_found"
+    count = await db.scalar(
+        select(func.count()).where(Product.category_id == cat_id)
+    )
+    if count and count > 0:
+        return "has_products"
+    await db.delete(cat)
+    await db.commit()
+    return "ok"
+
+
+# ── Admin: stats ───────────────────────────────────────────────────────────────
+
+async def admin_get_stats(db: AsyncSession) -> dict:
+    from datetime import date, timedelta
+
+    today = date.today()
+    week_ago = today - timedelta(days=7)
+
+    total_orders = await db.scalar(select(func.count()).select_from(Order)) or 0
+    orders_today = (
+        await db.scalar(
+            select(func.count(Order.id)).where(
+                func.date(Order.created_at) == today
+            )
+        )
+        or 0
+    )
+    orders_week = (
+        await db.scalar(
+            select(func.count(Order.id)).where(Order.created_at >= str(week_ago))
+        )
+        or 0
+    )
+    total_revenue = (
+        await db.scalar(
+            select(func.sum(Order.total_uzs)).where(Order.status != "cancelled")
+        )
+        or Decimal("0")
+    )
+    total_products = await db.scalar(select(func.count()).select_from(Product)) or 0
+    active_products = (
+        await db.scalar(select(func.count()).where(Product.is_active == True)) or 0
+    )
+    total_categories = (
+        await db.scalar(select(func.count()).select_from(Category)) or 0
+    )
+    pending_orders = (
+        await db.scalar(select(func.count()).where(Order.status == "pending")) or 0
+    )
+
+    return {
+        "total_orders": total_orders,
+        "orders_today": orders_today,
+        "orders_this_week": orders_week,
+        "total_revenue": total_revenue,
+        "total_products": total_products,
+        "active_products": active_products,
+        "total_categories": total_categories,
+        "pending_orders": pending_orders,
+    }
+
+
 async def create_order(db: AsyncSession, data, items_data: list):
     total = Decimal("0")
     resolved_items = []
