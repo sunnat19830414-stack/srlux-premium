@@ -40,8 +40,8 @@ async def _send_telegram(order: OrderOut):
                     "parse_mode": "Markdown",
                 },
             )
-    except Exception as e:
-        logger.warning(f"Telegram notification failed: {e}")
+    except Exception:
+        logger.warning("Telegram notification failed (token/network error)")
 
 
 @router.post("", response_model=OrderOut, status_code=201)

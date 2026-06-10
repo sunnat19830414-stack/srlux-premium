@@ -1,7 +1,8 @@
 from __future__ import annotations
+import re
 from decimal import Decimal
 from typing import Dict, List, Optional
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ── Category ──────────────────────────────────────────────────────────────────
@@ -146,16 +147,26 @@ class BulkImportOut(BaseModel):
 # ── Orders ─────────────────────────────────────────────────────────────────────
 
 class OrderItemIn(BaseModel):
-    product_id: int
-    variant_id: Optional[int] = None
-    quantity: int = 1
+    product_id: int = Field(..., gt=0)
+    variant_id: Optional[int] = Field(None, gt=0)
+    quantity: int = Field(1, gt=0, le=1000)
+
+
+_PHONE_RE = re.compile(r"^\+?[\d\s\-()]{5,30}$")
 
 
 class OrderIn(BaseModel):
-    customer_name: str
-    customer_phone: str
-    customer_address: Optional[str] = None
-    items: List[OrderItemIn]
+    customer_name: str = Field(..., min_length=2, max_length=200)
+    customer_phone: str = Field(..., min_length=5, max_length=30)
+    customer_address: Optional[str] = Field(None, max_length=500)
+    items: List[OrderItemIn] = Field(..., min_length=1, max_length=100)
+
+    @field_validator("customer_phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        if not _PHONE_RE.match(v):
+            raise ValueError("Некорректный номер телефона")
+        return v
 
 
 class OrderItemOut(BaseModel):

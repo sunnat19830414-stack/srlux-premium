@@ -1,3 +1,4 @@
+import DOMPurify from 'dompurify'
 import { ArrowLeft, ImageOff, ShoppingCart } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
@@ -303,7 +304,7 @@ export default function ModelPage({ onAddToCart }: Props) {
                 <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Описание</p>
                 <div
                   className="text-gray-300 text-sm leading-relaxed [&_strong]:text-gray-200 [&_br]:block"
-                  dangerouslySetInnerHTML={{ __html: model.description_ru }}
+                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(model.description_ru) }}
                 />
               </div>
             )}

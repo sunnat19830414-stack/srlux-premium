@@ -1,7 +1,7 @@
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import crud
@@ -21,14 +21,12 @@ def _serialize(obj):
 
 @router.get("", response_model=ProductListOut)
 async def list_products(
-    page: int = 1,
-    limit: int = 20,
-    category_id: Optional[int] = None,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    category_id: Optional[int] = Query(None, gt=0),
     accept_language: str = Header(default="ru"),
     db: AsyncSession = Depends(get_db),
 ):
-    if limit > 100:
-        limit = 100
     total, products = await crud.get_products(db, page=page, limit=limit, category_id=category_id)
     return ProductListOut(total=total, page=page, limit=limit, products=products)
 
