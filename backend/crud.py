@@ -267,18 +267,35 @@ async def admin_list_orders(
     page: int = 1,
     limit: int = 20,
     status: Optional[str] = None,
+    search: Optional[str] = None,
 ):
-    q = (
-        select(Order)
-        .options(selectinload(Order.items))
-        .order_by(Order.created_at.desc())
-    )
+    q = select(Order).options(selectinload(Order.items)).order_by(Order.created_at.desc())
+    if search:
+        t = f"%{search}%"
+        q = q.where(
+            Order.order_number.ilike(t)
+            | Order.customer_name.ilike(t)
+            | Order.customer_phone.ilike(t)
+        )
     if status:
         q = q.where(Order.status == status)
-    count_q = select(func.count()).select_from(q.subquery())
-    total = await db.scalar(count_q) or 0
+
+    total = await db.scalar(select(func.count()).select_from(q.subquery())) or 0
     result = await db.execute(q.offset((page - 1) * limit).limit(limit))
-    return total, result.scalars().all()
+    orders = result.scalars().all()
+
+    # Status counts (global, ignoring current filter)
+    counts_raw = dict(
+        (await db.execute(select(Order.status, func.count(Order.id)).group_by(Order.status))).all()
+    )
+    counts = {
+        "pending": counts_raw.get("pending", 0),
+        "processing": counts_raw.get("processing", 0),
+        "completed": counts_raw.get("completed", 0),
+        "cancelled": counts_raw.get("cancelled", 0),
+        "total": sum(counts_raw.values()),
+    }
+    return total, orders, counts
 
 
 async def admin_get_order(db: AsyncSession, order_id: int):
@@ -308,16 +325,24 @@ async def admin_list_products(
     limit: int = 50,
     search: Optional[str] = None,
     is_active: Optional[bool] = None,
+    sort_by: str = "id",
+    sort_dir: str = "asc",
 ):
-    q = select(Product).order_by(Product.id)
+    sort_col = {
+        "name_ru": Product.name_ru,
+        "price_uzs": Product.price_uzs,
+        "stock": Product.stock,
+        "id": Product.id,
+    }.get(sort_by, Product.id)
+    order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
+
+    q = select(Product).order_by(order)
     if search:
-        q = q.where(
-            Product.name_ru.ilike(f"%{search}%") | Product.sku.ilike(f"%{search}%")
-        )
+        q = q.where(Product.name_ru.ilike(f"%{search}%") | Product.sku.ilike(f"%{search}%"))
     if is_active is not None:
         q = q.where(Product.is_active == is_active)
-    count_q = select(func.count()).select_from(q.subquery())
-    total = await db.scalar(count_q) or 0
+
+    total = await db.scalar(select(func.count()).select_from(q.subquery())) or 0
     result = await db.execute(q.offset((page - 1) * limit).limit(limit))
     return total, result.scalars().all()
 
@@ -427,6 +452,21 @@ async def admin_get_stats(db: AsyncSession) -> dict:
         await db.scalar(select(func.count()).where(Order.status == "pending")) or 0
     )
 
+    # Recent orders
+    recent_result = await db.execute(
+        select(Order).order_by(Order.created_at.desc()).limit(8)
+    )
+    recent_orders = recent_result.scalars().all()
+
+    # Low stock products (active, stock < 10)
+    low_result = await db.execute(
+        select(Product)
+        .where(Product.is_active == True, Product.stock < 10)
+        .order_by(Product.stock.asc())
+        .limit(10)
+    )
+    low_stock = low_result.scalars().all()
+
     return {
         "total_orders": total_orders,
         "orders_today": orders_today,
@@ -436,6 +476,8 @@ async def admin_get_stats(db: AsyncSession) -> dict:
         "active_products": active_products,
         "total_categories": total_categories,
         "pending_orders": pending_orders,
+        "recent_orders": recent_orders,
+        "low_stock_products": low_stock,
     }
 
 

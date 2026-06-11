@@ -78,10 +78,12 @@ async def list_orders(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     status: Optional[str] = Query(None),
+    search: Optional[str] = Query(None, max_length=200),
     db: AsyncSession = Depends(get_db),
 ):
-    total, orders = await crud.admin_list_orders(db, page=page, limit=limit, status=status)
-    return AdminOrderListOut(total=total, page=page, limit=limit, orders=orders)
+    from schemas import OrderStatusCounts
+    total, orders, counts = await crud.admin_list_orders(db, page=page, limit=limit, status=status, search=search)
+    return AdminOrderListOut(total=total, page=page, limit=limit, orders=orders, counts=OrderStatusCounts(**counts))
 
 
 @router.get("/orders/{order_id}", response_model=AdminOrderOut, dependencies=[Depends(_require_api_key)])
@@ -109,9 +111,11 @@ async def list_products_admin(
     limit: int = Query(50, ge=1, le=200),
     search: Optional[str] = Query(None, max_length=200),
     is_active: Optional[bool] = Query(None),
+    sort_by: str = Query("id", pattern="^(id|name_ru|price_uzs|stock)$"),
+    sort_dir: str = Query("asc", pattern="^(asc|desc)$"),
     db: AsyncSession = Depends(get_db),
 ):
-    total, products = await crud.admin_list_products(db, page=page, limit=limit, search=search, is_active=is_active)
+    total, products = await crud.admin_list_products(db, page=page, limit=limit, search=search, is_active=is_active, sort_by=sort_by, sort_dir=sort_dir)
     return AdminProductListOut(total=total, page=page, limit=limit, products=products)
 
 

@@ -213,11 +213,20 @@ class AdminOrderOut(BaseModel):
     items: List[AdminOrderItemOut] = []
 
 
+class OrderStatusCounts(BaseModel):
+    pending: int = 0
+    processing: int = 0
+    completed: int = 0
+    cancelled: int = 0
+    total: int = 0
+
+
 class AdminOrderListOut(BaseModel):
     total: int
     page: int
     limit: int
     orders: List[AdminOrderOut]
+    counts: OrderStatusCounts = OrderStatusCounts()
 
 
 class OrderStatusUpdate(BaseModel):
@@ -276,6 +285,24 @@ class CategoryUpdateIn(BaseModel):
     icon: Optional[str] = Field(None, max_length=100)
 
 
+class RecentOrderMini(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    order_number: str
+    customer_name: str
+    total_uzs: Decimal
+    status: str
+    created_at: datetime
+
+
+class LowStockProduct(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    sku: str
+    name_ru: str
+    stock: int
+
+
 class AdminStatsOut(BaseModel):
     total_orders: int
     orders_today: int
@@ -285,6 +312,8 @@ class AdminStatsOut(BaseModel):
     active_products: int
     total_categories: int
     pending_orders: int
+    recent_orders: List[RecentOrderMini] = []
+    low_stock_products: List[LowStockProduct] = []
 
 
 class SyncStatusOut(BaseModel):

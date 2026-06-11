@@ -27,6 +27,22 @@ adminApi.interceptors.response.use(
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+export interface RecentOrderMini {
+  id: number
+  order_number: string
+  customer_name: string
+  total_uzs: number
+  status: string
+  created_at: string
+}
+
+export interface LowStockProduct {
+  id: number
+  sku: string
+  name_ru: string
+  stock: number
+}
+
 export interface AdminStats {
   total_orders: number
   orders_today: number
@@ -36,6 +52,16 @@ export interface AdminStats {
   active_products: number
   total_categories: number
   pending_orders: number
+  recent_orders: RecentOrderMini[]
+  low_stock_products: LowStockProduct[]
+}
+
+export interface OrderStatusCounts {
+  pending: number
+  processing: number
+  completed: number
+  cancelled: number
+  total: number
 }
 
 export interface AdminOrderItem {
@@ -62,6 +88,7 @@ export interface AdminOrderList {
   page: number
   limit: number
   orders: AdminOrder[]
+  counts: OrderStatusCounts
 }
 
 export interface AdminProduct {
@@ -107,7 +134,7 @@ export const adminCheckAuth = () => adminApi.get<AdminStats>('/api/admin/stats')
 
 export const adminGetStats = () => adminApi.get<AdminStats>('/api/admin/stats')
 
-export const adminGetOrders = (params: { page?: number; limit?: number; status?: string }) =>
+export const adminGetOrders = (params: { page?: number; limit?: number; status?: string; search?: string }) =>
   adminApi.get<AdminOrderList>('/api/admin/orders', { params })
 
 export const adminGetOrder = (id: number) =>
@@ -116,7 +143,7 @@ export const adminGetOrder = (id: number) =>
 export const adminUpdateOrderStatus = (id: number, status: string) =>
   adminApi.patch<AdminOrder>(`/api/admin/orders/${id}/status`, { status })
 
-export const adminGetProducts = (params: { page?: number; limit?: number; search?: string; is_active?: boolean }) =>
+export const adminGetProducts = (params: { page?: number; limit?: number; search?: string; is_active?: boolean; sort_by?: string; sort_dir?: string }) =>
   adminApi.get<AdminProductList>('/api/admin/products', { params })
 
 export const adminUpdateProduct = (id: number, data: Partial<AdminProduct>) =>
