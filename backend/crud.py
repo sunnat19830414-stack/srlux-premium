@@ -422,23 +422,26 @@ async def admin_delete_category(db: AsyncSession, cat_id: int) -> str:
 # ── Admin: stats ───────────────────────────────────────────────────────────────
 
 async def admin_get_stats(db: AsyncSession) -> dict:
-    from datetime import date, timedelta
+    from datetime import date, datetime, timedelta
 
     today = date.today()
-    week_ago = today - timedelta(days=7)
+    today_start = datetime.combine(today, datetime.min.time())
+    tomorrow_start = today_start + timedelta(days=1)
+    week_start = today_start - timedelta(days=7)
 
     total_orders = await db.scalar(select(func.count()).select_from(Order)) or 0
     orders_today = (
         await db.scalar(
             select(func.count(Order.id)).where(
-                func.date(Order.created_at) == today
+                Order.created_at >= today_start,
+                Order.created_at < tomorrow_start,
             )
         )
         or 0
     )
     orders_week = (
         await db.scalar(
-            select(func.count(Order.id)).where(Order.created_at >= str(week_ago))
+            select(func.count(Order.id)).where(Order.created_at >= week_start)
         )
         or 0
     )
