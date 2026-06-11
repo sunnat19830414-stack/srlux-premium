@@ -241,6 +241,8 @@ class AdminProductOut(BaseModel):
     price_uzs: Decimal
     stock: int
     is_active: bool
+    is_featured: bool = False
+    sort_order: int = 0
     image_url: Optional[str]
     category_id: Optional[int]
     parent_model: Optional[str]
@@ -260,6 +262,8 @@ class ProductUpdateIn(BaseModel):
     price_uzs: Optional[Decimal] = Field(None, gt=0)
     image_url: Optional[str] = Field(None, max_length=1000)
     is_active: Optional[bool] = None
+    is_featured: Optional[bool] = None
+    sort_order: Optional[int] = Field(None, ge=0)
     category_id: Optional[int] = Field(None, gt=0)
 
 
@@ -271,18 +275,27 @@ class AdminCategoryOut(BaseModel):
     icon: str
     dolibarr_id: Optional[int]
     product_count: int
+    sort_order: int = 0
+    display_style: str = "grid"
+    is_featured: bool = False
 
 
 class CategoryCreateIn(BaseModel):
     name_ru: str = Field(..., min_length=1, max_length=500)
     name_uz: str = Field(..., min_length=1, max_length=500)
     icon: str = Field("Package", max_length=100)
+    display_style: str = Field("grid", pattern="^(grid|large-grid|list|featured)$")
+    is_featured: bool = False
+    sort_order: int = Field(0, ge=0)
 
 
 class CategoryUpdateIn(BaseModel):
     name_ru: Optional[str] = Field(None, min_length=1, max_length=500)
     name_uz: Optional[str] = Field(None, min_length=1, max_length=500)
     icon: Optional[str] = Field(None, max_length=100)
+    display_style: Optional[str] = Field(None, pattern="^(grid|large-grid|list|featured)$")
+    is_featured: Optional[bool] = None
+    sort_order: Optional[int] = Field(None, ge=0)
 
 
 class RecentOrderMini(BaseModel):

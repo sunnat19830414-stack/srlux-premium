@@ -1,7 +1,7 @@
-import { ArrowUpDown, Check, ImageOff, Pencil, X } from 'lucide-react'
+import { ArrowUpDown, ChevronDown, ChevronUp, Check, ImageOff, Pencil, Star, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import type { AdminProduct, AdminProductList } from '../../api/adminClient'
-import { adminGetProducts, adminUpdateProduct } from '../../api/adminClient'
+import type { AdminCategory, AdminProduct, AdminProductList } from '../../api/adminClient'
+import { adminGetCategories, adminGetProducts, adminUpdateProduct } from '../../api/adminClient'
 import { useToast } from '../../contexts/ToastContext'
 
 const fmt = (n: number) => new Intl.NumberFormat('ru-RU').format(Math.round(n))
@@ -40,30 +40,37 @@ function InlineEdit({ value, onSave, type = 'text', wide = false }: {
   )
 }
 
-type SortField = 'id' | 'name_ru' | 'price_uzs' | 'stock'
+type SortField = 'id' | 'name_ru' | 'price_uzs' | 'stock' | 'sort_order'
 
 export default function AdminProducts() {
   const { toast } = useToast()
   const [data, setData] = useState<AdminProductList | null>(null)
+  const [categories, setCategories] = useState<AdminCategory[]>([])
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [filterActive, setFilterActive] = useState<'all' | 'active' | 'inactive'>('all')
+  const [filterCategory, setFilterCategory] = useState<number | null>(null)
   const [sortBy, setSortBy] = useState<SortField>('id')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [selected, setSelected] = useState<Set<number>>(new Set())
+
+  useEffect(() => {
+    adminGetCategories().then((r) => setCategories(r.data)).catch(() => {})
+  }, [])
 
   const load = async () => {
     const params: Record<string, unknown> = { page, limit: 50, sort_by: sortBy, sort_dir: sortDir }
     if (search) params.search = search
     if (filterActive === 'active') params.is_active = true
     if (filterActive === 'inactive') params.is_active = false
+    if (filterCategory !== null) params.category_id = filterCategory
     const r = await adminGetProducts(params as Parameters<typeof adminGetProducts>[0])
     setData(r.data)
     setSelected(new Set())
   }
 
-  useEffect(() => { load() }, [page, filterActive, search, sortBy, sortDir])
+  useEffect(() => { load() }, [page, filterActive, filterCategory, search, sortBy, sortDir])
 
   const updateField = async (id: number, field: string, rawVal: string) => {
     const value = field === 'price_uzs' ? Number(rawVal.replace(/\s/g, '')) : rawVal
@@ -80,6 +87,29 @@ export default function AdminProducts() {
       toast(p.is_active ? 'Товар скрыт' : 'Товар активирован')
       load()
     } catch { toast('Ошибка', 'error') }
+  }
+
+  const toggleFeatured = async (p: AdminProduct) => {
+    try {
+      await adminUpdateProduct(p.id, { is_featured: !p.is_featured })
+      toast(p.is_featured ? 'Убрано из рекомендуемых' : 'Добавлено в рекомендуемые')
+      load()
+    } catch { toast('Ошибка', 'error') }
+  }
+
+  const moveOrder = async (p: AdminProduct, dir: 'up' | 'down') => {
+    if (!data) return
+    const idx = data.products.findIndex((x) => x.id === p.id)
+    const swapIdx = dir === 'up' ? idx - 1 : idx + 1
+    if (swapIdx < 0 || swapIdx >= data.products.length) return
+    const other = data.products[swapIdx]
+    try {
+      await Promise.all([
+        adminUpdateProduct(p.id, { sort_order: other.sort_order }),
+        adminUpdateProduct(other.id, { sort_order: p.sort_order }),
+      ])
+      load()
+    } catch { toast('Ошибка при изменении порядка', 'error') }
   }
 
   const bulkDeactivate = async () => {
@@ -116,11 +146,13 @@ export default function AdminProducts() {
   }
 
   const totalPages = data ? Math.ceil(data.total / 50) : 1
+  const catMap = new Map(categories.map((c) => [c.id, c]))
+  const showSortOrder = filterCategory !== null
 
   return (
     <div className="p-8">
       {/* Header */}
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
         <h1 className="text-xl font-bold text-white">Товары</h1>
 
         <input
@@ -132,7 +164,25 @@ export default function AdminProducts() {
           className="bg-gray-800 text-white text-sm rounded-xl px-3 py-2 border border-gray-700 w-60 focus:outline-none focus:border-amber-500"
         />
 
-        <select value={filterActive} onChange={(e) => { setFilterActive(e.target.value as any); setPage(1) }}
+        {/* Category filter */}
+        <select
+          value={filterCategory ?? ''}
+          onChange={(e) => {
+            const v = e.target.value
+            setFilterCategory(v === '' ? null : Number(v))
+            setPage(1)
+            if (v !== '' && sortBy === 'id') { setSortBy('sort_order'); setSortDir('asc') }
+            if (v === '' && sortBy === 'sort_order') { setSortBy('id'); setSortDir('asc') }
+          }}
+          className="bg-gray-800 text-white text-sm rounded-xl px-3 py-2 border border-gray-700 max-w-48"
+        >
+          <option value="">Все категории</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>{c.name_ru}</option>
+          ))}
+        </select>
+
+        <select value={filterActive} onChange={(e) => { setFilterActive(e.target.value as typeof filterActive); setPage(1) }}
           className="bg-gray-800 text-white text-sm rounded-xl px-3 py-2 border border-gray-700">
           <option value="all">Все</option>
           <option value="active">Активные</option>
@@ -141,7 +191,7 @@ export default function AdminProducts() {
 
         {selected.size > 0 && (
           <button onClick={bulkDeactivate}
-            className="bg-red-600/80 hover:bg-red-600 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors ml-auto">
+            className="bg-red-600/80 hover:bg-red-600 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors">
             Скрыть выбранные ({selected.size})
           </button>
         )}
@@ -151,6 +201,14 @@ export default function AdminProducts() {
         )}
       </div>
 
+      {/* Category mode hint */}
+      {showSortOrder && (
+        <div className="mb-3 flex items-center gap-2 text-xs text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded-xl px-3 py-2">
+          <ChevronUp size={13} />
+          Режим сортировки внутри категории — используйте стрелки для изменения порядка товаров
+        </div>
+      )}
+
       <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
         <table className="w-full text-sm">
           <thead>
@@ -159,23 +217,31 @@ export default function AdminProducts() {
                 <input type="checkbox" checked={selected.size > 0 && selected.size === data?.products.length}
                   onChange={selectAll} className="accent-amber-500 cursor-pointer" />
               </th>
+              {showSortOrder && <th className="px-2 py-3 w-14 text-center cursor-pointer hover:text-white" onClick={() => toggleSort('sort_order')}>
+                Поряд. <SortIcon field="sort_order" />
+              </th>}
               <th className="px-2 py-3 w-10">Фото</th>
               <th className="px-4 py-3 text-left">SKU</th>
               <th className="px-4 py-3 text-left cursor-pointer hover:text-white" onClick={() => toggleSort('name_ru')}>
                 Название <SortIcon field="name_ru" />
               </th>
+              {!showSortOrder && (
+                <th className="px-4 py-3 text-left text-gray-500">Категория</th>
+              )}
               <th className="px-4 py-3 text-right cursor-pointer hover:text-white" onClick={() => toggleSort('price_uzs')}>
                 Цена <SortIcon field="price_uzs" />
               </th>
               <th className="px-4 py-3 text-right cursor-pointer hover:text-white" onClick={() => toggleSort('stock')}>
                 Остаток <SortIcon field="stock" />
               </th>
+              <th className="px-4 py-3 text-center w-8" title="Рекомендуемый"><Star size={11} className="inline" /></th>
               <th className="px-4 py-3 text-center">Активен</th>
             </tr>
           </thead>
           <tbody>
-            {data?.products.map((p) => {
+            {data?.products.map((p, idx) => {
               const isSelected = selected.has(p.id)
+              const cat = p.category_id ? catMap.get(p.category_id) : null
               return (
                 <tr
                   key={p.id}
@@ -187,6 +253,21 @@ export default function AdminProducts() {
                     <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(p.id)}
                       className="accent-amber-500 cursor-pointer" />
                   </td>
+                  {showSortOrder && (
+                    <td className="px-2 py-2">
+                      <div className="flex flex-col items-center gap-0.5">
+                        <button onClick={() => moveOrder(p, 'up')} disabled={idx === 0}
+                          className="w-5 h-5 flex items-center justify-center rounded text-gray-600 hover:text-white hover:bg-gray-700 disabled:opacity-20">
+                          <ChevronUp size={11} />
+                        </button>
+                        <span className="text-[9px] text-gray-700 font-mono">{p.sort_order}</span>
+                        <button onClick={() => moveOrder(p, 'down')} disabled={idx === (data?.products.length ?? 1) - 1}
+                          className="w-5 h-5 flex items-center justify-center rounded text-gray-600 hover:text-white hover:bg-gray-700 disabled:opacity-20">
+                          <ChevronDown size={11} />
+                        </button>
+                      </div>
+                    </td>
+                  )}
                   <td className="px-2 py-2">
                     {p.image_url ? (
                       <img
@@ -205,6 +286,15 @@ export default function AdminProducts() {
                   <td className="px-4 py-2 text-white max-w-xs">
                     <InlineEdit value={p.name_ru} onSave={(v) => updateField(p.id, 'name_ru', v)} wide />
                   </td>
+                  {!showSortOrder && (
+                    <td className="px-4 py-2">
+                      {cat ? (
+                        <span className="text-xs bg-gray-800 text-gray-400 px-2 py-0.5 rounded-lg">{cat.name_ru}</span>
+                      ) : (
+                        <span className="text-gray-700 text-xs">—</span>
+                      )}
+                    </td>
+                  )}
                   <td className="px-4 py-2 text-right text-white whitespace-nowrap">
                     <InlineEdit
                       value={fmt(p.price_uzs)}
@@ -215,6 +305,21 @@ export default function AdminProducts() {
                   <td className={`px-4 py-2 text-right ${stockColor(p.stock)}`}>
                     {p.stock === 0 ? 'Нет' : p.stock}
                   </td>
+                  {/* Featured star */}
+                  <td className="px-4 py-2 text-center">
+                    <button
+                      onClick={() => toggleFeatured(p)}
+                      title={p.is_featured ? 'Убрать из рекомендуемых' : 'Добавить в рекомендуемые'}
+                      className={`w-6 h-6 mx-auto flex items-center justify-center rounded transition-colors ${
+                        p.is_featured
+                          ? 'text-amber-400 hover:text-amber-300'
+                          : 'text-gray-700 hover:text-amber-400'
+                      }`}
+                    >
+                      <Star size={12} fill={p.is_featured ? 'currentColor' : 'none'} />
+                    </button>
+                  </td>
+                  {/* Active toggle */}
                   <td className="px-4 py-2 text-center">
                     <button
                       onClick={() => toggleActive(p)}
@@ -232,7 +337,7 @@ export default function AdminProducts() {
             })}
             {!data?.products.length && (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-gray-600">
+                <td colSpan={showSortOrder ? 10 : 10} className="px-4 py-12 text-center text-gray-600">
                   {search ? `Ничего не найдено` : 'Товаров нет'}
                 </td>
               </tr>
@@ -250,7 +355,10 @@ export default function AdminProducts() {
             className="px-3 py-1.5 rounded-xl bg-gray-800 text-white disabled:opacity-30 hover:bg-gray-700">→</button>
         </div>
       )}
-      <p className="text-gray-700 text-xs mt-2">Нажмите на название или цену для редактирования</p>
+      <p className="text-gray-700 text-xs mt-2">
+        Нажмите на название или цену для редактирования · <Star size={10} className="inline" /> — рекомендуемый товар
+        {showSortOrder && ' · Стрелки — изменить порядок в категории'}
+      </p>
     </div>
   )
 }

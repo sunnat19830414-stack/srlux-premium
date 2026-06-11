@@ -98,6 +98,8 @@ export interface AdminProduct {
   price_uzs: number
   stock: number
   is_active: boolean
+  is_featured: boolean
+  sort_order: number
   image_url: string | null
   category_id: number | null
   parent_model: string | null
@@ -111,6 +113,8 @@ export interface AdminProductList {
   products: AdminProduct[]
 }
 
+export type CategoryDisplayStyle = 'grid' | 'large-grid' | 'list' | 'featured'
+
 export interface AdminCategory {
   id: number
   slug: string
@@ -119,6 +123,9 @@ export interface AdminCategory {
   icon: string
   dolibarr_id: number | null
   product_count: number
+  sort_order: number
+  display_style: CategoryDisplayStyle
+  is_featured: boolean
 }
 
 export interface SyncStatus {
@@ -143,8 +150,11 @@ export const adminGetOrder = (id: number) =>
 export const adminUpdateOrderStatus = (id: number, status: string) =>
   adminApi.patch<AdminOrder>(`/api/admin/orders/${id}/status`, { status })
 
-export const adminGetProducts = (params: { page?: number; limit?: number; search?: string; is_active?: boolean; sort_by?: string; sort_dir?: string }) =>
-  adminApi.get<AdminProductList>('/api/admin/products', { params })
+export const adminGetProducts = (params: {
+  page?: number; limit?: number; search?: string
+  is_active?: boolean; category_id?: number
+  sort_by?: string; sort_dir?: string
+}) => adminApi.get<AdminProductList>('/api/admin/products', { params })
 
 export const adminUpdateProduct = (id: number, data: Partial<AdminProduct>) =>
   adminApi.patch<AdminProduct>(`/api/admin/products/${id}`, data)
@@ -152,8 +162,10 @@ export const adminUpdateProduct = (id: number, data: Partial<AdminProduct>) =>
 export const adminGetCategories = () =>
   adminApi.get<AdminCategory[]>('/api/admin/categories-list')
 
-export const adminCreateCategory = (data: { name_ru: string; name_uz: string; icon: string }) =>
-  adminApi.post<AdminCategory>('/api/admin/categories-list', data)
+export const adminCreateCategory = (data: {
+  name_ru: string; name_uz: string; icon: string
+  display_style: CategoryDisplayStyle; is_featured: boolean; sort_order: number
+}) => adminApi.post<AdminCategory>('/api/admin/categories-list', data)
 
 export const adminUpdateCategory = (id: number, data: Partial<AdminCategory>) =>
   adminApi.patch<AdminCategory>(`/api/admin/categories-list/${id}`, data)

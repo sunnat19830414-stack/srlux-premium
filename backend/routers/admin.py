@@ -111,11 +111,16 @@ async def list_products_admin(
     limit: int = Query(50, ge=1, le=200),
     search: Optional[str] = Query(None, max_length=200),
     is_active: Optional[bool] = Query(None),
-    sort_by: str = Query("id", pattern="^(id|name_ru|price_uzs|stock)$"),
+    category_id: Optional[int] = Query(None, ge=1),
+    sort_by: str = Query("id", pattern="^(id|name_ru|price_uzs|stock|sort_order)$"),
     sort_dir: str = Query("asc", pattern="^(asc|desc)$"),
     db: AsyncSession = Depends(get_db),
 ):
-    total, products = await crud.admin_list_products(db, page=page, limit=limit, search=search, is_active=is_active, sort_by=sort_by, sort_dir=sort_dir)
+    total, products = await crud.admin_list_products(
+        db, page=page, limit=limit, search=search,
+        is_active=is_active, category_id=category_id,
+        sort_by=sort_by, sort_dir=sort_dir,
+    )
     return AdminProductListOut(total=total, page=page, limit=limit, products=products)
 
 
@@ -143,6 +148,9 @@ async def list_categories_admin(db: AsyncSession = Depends(get_db)):
             icon=cat.icon,
             dolibarr_id=cat.dolibarr_id,
             product_count=count,
+            sort_order=cat.sort_order,
+            display_style=cat.display_style,
+            is_featured=cat.is_featured,
         )
         for cat, count in rows
     ]
@@ -150,8 +158,15 @@ async def list_categories_admin(db: AsyncSession = Depends(get_db)):
 
 @router.post("/categories-list", response_model=AdminCategoryOut, dependencies=[Depends(_require_api_key)])
 async def create_category(data: CategoryCreateIn, db: AsyncSession = Depends(get_db)):
-    cat = await crud.admin_create_category(db, data.name_ru, data.name_uz, data.icon)
-    return AdminCategoryOut(id=cat.id, slug=cat.slug, name_ru=cat.name_ru, name_uz=cat.name_uz, icon=cat.icon, dolibarr_id=cat.dolibarr_id, product_count=0)
+    cat = await crud.admin_create_category(
+        db, data.name_ru, data.name_uz, data.icon,
+        display_style=data.display_style, is_featured=data.is_featured, sort_order=data.sort_order,
+    )
+    return AdminCategoryOut(
+        id=cat.id, slug=cat.slug, name_ru=cat.name_ru, name_uz=cat.name_uz,
+        icon=cat.icon, dolibarr_id=cat.dolibarr_id, product_count=0,
+        sort_order=cat.sort_order, display_style=cat.display_style, is_featured=cat.is_featured,
+    )
 
 
 @router.patch("/categories-list/{cat_id}", response_model=AdminCategoryOut, dependencies=[Depends(_require_api_key)])
@@ -161,8 +176,12 @@ async def update_category(cat_id: int, data: CategoryUpdateIn, db: AsyncSession 
     if not cat:
         raise HTTPException(status_code=404, detail="Category not found")
     rows = await crud.admin_list_categories(db)
-    count = next((c for _, c in rows if _ .id == cat_id), 0)
-    return AdminCategoryOut(id=cat.id, slug=cat.slug, name_ru=cat.name_ru, name_uz=cat.name_uz, icon=cat.icon, dolibarr_id=cat.dolibarr_id, product_count=count)
+    count = next((c for cat2, c in rows if cat2.id == cat_id), 0)
+    return AdminCategoryOut(
+        id=cat.id, slug=cat.slug, name_ru=cat.name_ru, name_uz=cat.name_uz,
+        icon=cat.icon, dolibarr_id=cat.dolibarr_id, product_count=count,
+        sort_order=cat.sort_order, display_style=cat.display_style, is_featured=cat.is_featured,
+    )
 
 
 @router.delete("/categories-list/{cat_id}", dependencies=[Depends(_require_api_key)])

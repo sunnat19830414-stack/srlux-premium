@@ -325,6 +325,7 @@ async def admin_list_products(
     limit: int = 50,
     search: Optional[str] = None,
     is_active: Optional[bool] = None,
+    category_id: Optional[int] = None,
     sort_by: str = "id",
     sort_dir: str = "asc",
 ):
@@ -332,6 +333,7 @@ async def admin_list_products(
         "name_ru": Product.name_ru,
         "price_uzs": Product.price_uzs,
         "stock": Product.stock,
+        "sort_order": Product.sort_order,
         "id": Product.id,
     }.get(sort_by, Product.id)
     order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
@@ -341,6 +343,8 @@ async def admin_list_products(
         q = q.where(Product.name_ru.ilike(f"%{search}%") | Product.sku.ilike(f"%{search}%"))
     if is_active is not None:
         q = q.where(Product.is_active == is_active)
+    if category_id is not None:
+        q = q.where(Product.category_id == category_id)
 
     total = await db.scalar(select(func.count()).select_from(q.subquery())) or 0
     result = await db.execute(q.offset((page - 1) * limit).limit(limit))
@@ -368,18 +372,21 @@ async def admin_list_categories(db: AsyncSession):
         )
         .outerjoin(Product, Product.category_id == Category.id)
         .group_by(Category.id)
-        .order_by(Category.name_ru)
+        .order_by(Category.sort_order, Category.name_ru)
     )
     return result.all()
 
 
 async def admin_create_category(
-    db: AsyncSession, name_ru: str, name_uz: str, icon: str
+    db: AsyncSession, name_ru: str, name_uz: str, icon: str,
+    display_style: str = "grid", is_featured: bool = False, sort_order: int = 0,
 ):
     slug = _slugify(name_ru)
     slug = await _unique_slug(db, Category, slug)
     cat = Category(
-        slug=slug, name_ru=name_ru, name_uz=name_uz, icon=icon, dolibarr_id=None
+        slug=slug, name_ru=name_ru, name_uz=name_uz, icon=icon,
+        display_style=display_style, is_featured=is_featured, sort_order=sort_order,
+        dolibarr_id=None,
     )
     db.add(cat)
     await db.commit()

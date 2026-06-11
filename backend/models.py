@@ -19,6 +19,9 @@ class Category(Base):
     name_uz = Column(String(500), nullable=False)
     icon = Column(String(100), default="Package")  # lucide-react icon name
     dolibarr_id = Column(Integer, unique=True, nullable=True)
+    sort_order = Column(Integer, default=0, nullable=False)
+    display_style = Column(String(50), default="grid", nullable=False)
+    is_featured = Column(Boolean, default=False, nullable=False)
 
     products = relationship("Product", back_populates="category")
 
@@ -40,6 +43,8 @@ class Product(Base):
     image_url = Column(String(1000), nullable=True)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     dolibarr_id = Column(Integer, unique=True, nullable=True, index=True)
+    sort_order = Column(Integer, default=0, nullable=False)
+    is_featured = Column(Boolean, default=False, nullable=False)
     parent_model = Column(String(100), nullable=True, index=True)
     color = Column(String(50), nullable=True)
     height_mm = Column(Integer, nullable=True)
