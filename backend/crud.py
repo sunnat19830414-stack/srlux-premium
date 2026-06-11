@@ -313,8 +313,10 @@ async def admin_update_order_status(db: AsyncSession, order_id: int, status: str
         return None
     order.status = status
     await db.commit()
-    await db.refresh(order)
-    return order
+    result = await db.execute(
+        select(Order).where(Order.id == order_id).options(selectinload(Order.items))
+    )
+    return result.scalar_one_or_none()
 
 
 # ── Admin: products ────────────────────────────────────────────────────────────
