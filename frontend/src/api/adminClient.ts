@@ -150,6 +150,14 @@ export const adminGetOrder = (id: number) =>
 export const adminUpdateOrderStatus = (id: number, status: string) =>
   adminApi.patch<AdminOrder>(`/api/admin/orders/${id}/status`, { status })
 
+export const adminUploadProductImage = (id: number, file: File) => {
+  const form = new FormData()
+  form.append('file', file)
+  return adminApi.post<AdminProduct>(`/api/admin/products/${id}/image`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
 export const adminGetProducts = (params: {
   page?: number; limit?: number; search?: string
   is_active?: boolean; category_id?: number

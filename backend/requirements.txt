@@ -10,3 +10,4 @@ redis==5.0.1
 python-slugify==8.0.1
 requests==2.31.0
 alembic==1.13.1
+python-multipart==0.0.9

@@ -1,7 +1,7 @@
-import { ArrowUpDown, ChevronDown, ChevronUp, Check, ImageOff, Pencil, Star, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { ArrowUpDown, Camera, ChevronDown, ChevronUp, Check, ImageOff, Pencil, Star, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import type { AdminCategory, AdminProduct, AdminProductList } from '../../api/adminClient'
-import { adminGetCategories, adminGetProducts, adminUpdateProduct } from '../../api/adminClient'
+import { adminGetCategories, adminGetProducts, adminUpdateProduct, adminUploadProductImage } from '../../api/adminClient'
 import { useToast } from '../../contexts/ToastContext'
 
 const fmt = (n: number) => new Intl.NumberFormat('ru-RU').format(Math.round(n))
@@ -14,10 +14,8 @@ function InlineEdit({ value, onSave, type = 'text', wide = false }: {
 }) {
   const [editing, setEditing] = useState(false)
   const [val, setVal] = useState(String(value))
-
   const save = () => { if (val !== String(value)) onSave(val); setEditing(false) }
   const cancel = () => { setVal(String(value)); setEditing(false) }
-
   if (!editing)
     return (
       <span onClick={() => setEditing(true)}
@@ -26,17 +24,109 @@ function InlineEdit({ value, onSave, type = 'text', wide = false }: {
         <Pencil size={10} className="opacity-0 group-hover:opacity-40" />
       </span>
     )
-
   return (
     <span className="flex items-center gap-1">
-      <input type={type} value={val} onChange={(e) => setVal(e.target.value)}
-        autoFocus
+      <input type={type} value={val} onChange={(e) => setVal(e.target.value)} autoFocus
         onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancel() }}
         className={`bg-gray-800 text-white rounded-lg px-2 py-0.5 text-sm border border-amber-500 focus:outline-none ${wide ? 'w-48' : 'w-28'}`}
       />
       <button onClick={save} className="text-green-400 hover:text-green-300"><Check size={14} /></button>
       <button onClick={cancel} className="text-red-400 hover:text-red-300"><X size={14} /></button>
     </span>
+  )
+}
+
+function InlineCategorySelect({ categoryId, categories, onSave }: {
+  categoryId: number | null
+  categories: AdminCategory[]
+  onSave: (id: number | null) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const cat = categoryId ? categories.find((c) => c.id === categoryId) : null
+
+  if (!editing)
+    return (
+      <span onClick={() => setEditing(true)}
+        className="flex items-center gap-1 cursor-pointer group">
+        {cat
+          ? <span className="text-xs bg-gray-800 text-gray-400 px-2 py-0.5 rounded-lg group-hover:text-amber-400 transition-colors">{cat.name_ru}</span>
+          : <span className="text-gray-700 text-xs group-hover:text-amber-400 transition-colors">— нет —</span>}
+        <Pencil size={9} className="opacity-0 group-hover:opacity-40 text-amber-400" />
+      </span>
+    )
+
+  return (
+    <select
+      autoFocus
+      value={categoryId ?? ''}
+      onChange={(e) => {
+        const v = e.target.value
+        onSave(v === '' ? null : Number(v))
+        setEditing(false)
+      }}
+      onBlur={() => setEditing(false)}
+      className="bg-gray-800 text-white rounded-lg px-2 py-0.5 text-xs border border-amber-500 focus:outline-none max-w-40"
+    >
+      <option value="">— нет —</option>
+      {categories.map((c) => <option key={c.id} value={c.id}>{c.name_ru}</option>)}
+    </select>
+  )
+}
+
+function PhotoCell({ product, onUploaded }: { product: AdminProduct; onUploaded: () => void }) {
+  const { toast } = useToast()
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+
+  const handleFile = async (file: File) => {
+    if (!file.type.startsWith('image/')) { toast('Только изображения', 'error'); return }
+    if (file.size > 5 * 1024 * 1024) { toast('Файл слишком большой (макс. 5 МБ)', 'error'); return }
+    setPreviewUrl(URL.createObjectURL(file))
+    setUploading(true)
+    try {
+      await adminUploadProductImage(product.id, file)
+      toast('Фото загружено')
+      onUploaded()
+    } catch {
+      toast('Ошибка загрузки фото', 'error')
+      setPreviewUrl(null)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const displayUrl = previewUrl || product.image_url
+
+  return (
+    <div className="relative group w-9 h-9">
+      {displayUrl ? (
+        <img src={displayUrl} alt="" className="w-9 h-9 object-contain rounded-lg bg-gray-800"
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+      ) : (
+        <div className="w-9 h-9 flex items-center justify-center rounded-lg bg-gray-800">
+          <ImageOff size={14} className="text-gray-700" />
+        </div>
+      )}
+      {/* Upload overlay on hover */}
+      <button
+        onClick={() => inputRef.current?.click()}
+        disabled={uploading}
+        className={`absolute inset-0 flex items-center justify-center rounded-lg transition-all ${
+          uploading
+            ? 'bg-gray-900/70'
+            : 'bg-gray-900/0 group-hover:bg-gray-900/70 opacity-0 group-hover:opacity-100'
+        }`}
+        title="Загрузить фото"
+      >
+        {uploading
+          ? <div className="w-3 h-3 border border-amber-400 border-t-transparent rounded-full animate-spin" />
+          : <Camera size={13} className="text-amber-400" />
+        }
+      </button>
+      <input ref={inputRef} type="file" accept="image/*" className="hidden"
+        onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
+    </div>
   )
 }
 
@@ -79,6 +169,14 @@ export default function AdminProducts() {
       toast('Сохранено')
       load()
     } catch { toast('Ошибка сохранения', 'error') }
+  }
+
+  const updateCategory = async (id: number, categoryId: number | null) => {
+    try {
+      await adminUpdateProduct(id, { category_id: categoryId ?? undefined })
+      toast('Категория обновлена')
+      load()
+    } catch { toast('Ошибка', 'error') }
   }
 
   const toggleActive = async (p: AdminProduct) => {
@@ -126,18 +224,11 @@ export default function AdminProducts() {
   }
 
   const SortIcon = ({ field }: { field: SortField }) => (
-    <ArrowUpDown
-      size={12}
-      className={`inline ml-1 ${sortBy === field ? 'text-amber-400' : 'text-gray-600'} ${sortBy === field && sortDir === 'desc' ? 'rotate-180' : ''}`}
-    />
+    <ArrowUpDown size={12} className={`inline ml-1 ${sortBy === field ? 'text-amber-400' : 'text-gray-600'} ${sortBy === field && sortDir === 'desc' ? 'rotate-180' : ''}`} />
   )
 
   const toggleSelect = (id: number) => {
-    setSelected((prev) => {
-      const n = new Set(prev)
-      n.has(id) ? n.delete(id) : n.add(id)
-      return n
-    })
+    setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
 
   const selectAll = () => {
@@ -146,40 +237,28 @@ export default function AdminProducts() {
   }
 
   const totalPages = data ? Math.ceil(data.total / 50) : 1
-  const catMap = new Map(categories.map((c) => [c.id, c]))
   const showSortOrder = filterCategory !== null
 
   return (
     <div className="p-8">
-      {/* Header */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <h1 className="text-xl font-bold text-white">Товары</h1>
 
-        <input
-          type="text"
-          placeholder="Поиск по названию или SKU..."
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
+        <input type="text" placeholder="Поиск по названию или SKU..."
+          value={searchInput} onChange={(e) => setSearchInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { setSearch(searchInput); setPage(1) } }}
           className="bg-gray-800 text-white text-sm rounded-xl px-3 py-2 border border-gray-700 w-60 focus:outline-none focus:border-amber-500"
         />
 
-        {/* Category filter */}
-        <select
-          value={filterCategory ?? ''}
-          onChange={(e) => {
-            const v = e.target.value
-            setFilterCategory(v === '' ? null : Number(v))
-            setPage(1)
-            if (v !== '' && sortBy === 'id') { setSortBy('sort_order'); setSortDir('asc') }
-            if (v === '' && sortBy === 'sort_order') { setSortBy('id'); setSortDir('asc') }
-          }}
-          className="bg-gray-800 text-white text-sm rounded-xl px-3 py-2 border border-gray-700 max-w-48"
-        >
+        <select value={filterCategory ?? ''} onChange={(e) => {
+          const v = e.target.value
+          setFilterCategory(v === '' ? null : Number(v))
+          setPage(1)
+          if (v !== '' && sortBy === 'id') { setSortBy('sort_order'); setSortDir('asc') }
+          if (v === '' && sortBy === 'sort_order') { setSortBy('id'); setSortDir('asc') }
+        }} className="bg-gray-800 text-white text-sm rounded-xl px-3 py-2 border border-gray-700 max-w-48">
           <option value="">Все категории</option>
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>{c.name_ru}</option>
-          ))}
+          {categories.map((c) => <option key={c.id} value={c.id}>{c.name_ru}</option>)}
         </select>
 
         <select value={filterActive} onChange={(e) => { setFilterActive(e.target.value as typeof filterActive); setPage(1) }}
@@ -196,12 +275,9 @@ export default function AdminProducts() {
           </button>
         )}
 
-        {data && (
-          <span className="text-gray-600 text-sm ml-auto">{data.total} товаров</span>
-        )}
+        {data && <span className="text-gray-600 text-sm ml-auto">{data.total} товаров</span>}
       </div>
 
-      {/* Category mode hint */}
       {showSortOrder && (
         <div className="mb-3 flex items-center gap-2 text-xs text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded-xl px-3 py-2">
           <ChevronUp size={13} />
@@ -217,17 +293,17 @@ export default function AdminProducts() {
                 <input type="checkbox" checked={selected.size > 0 && selected.size === data?.products.length}
                   onChange={selectAll} className="accent-amber-500 cursor-pointer" />
               </th>
-              {showSortOrder && <th className="px-2 py-3 w-14 text-center cursor-pointer hover:text-white" onClick={() => toggleSort('sort_order')}>
-                Поряд. <SortIcon field="sort_order" />
-              </th>}
+              {showSortOrder && (
+                <th className="px-2 py-3 w-14 text-center cursor-pointer hover:text-white" onClick={() => toggleSort('sort_order')}>
+                  Поряд. <SortIcon field="sort_order" />
+                </th>
+              )}
               <th className="px-2 py-3 w-10">Фото</th>
               <th className="px-4 py-3 text-left">SKU</th>
               <th className="px-4 py-3 text-left cursor-pointer hover:text-white" onClick={() => toggleSort('name_ru')}>
                 Название <SortIcon field="name_ru" />
               </th>
-              {!showSortOrder && (
-                <th className="px-4 py-3 text-left text-gray-500">Категория</th>
-              )}
+              <th className="px-4 py-3 text-left">Категория</th>
               <th className="px-4 py-3 text-right cursor-pointer hover:text-white" onClick={() => toggleSort('price_uzs')}>
                 Цена <SortIcon field="price_uzs" />
               </th>
@@ -241,17 +317,10 @@ export default function AdminProducts() {
           <tbody>
             {data?.products.map((p, idx) => {
               const isSelected = selected.has(p.id)
-              const cat = p.category_id ? catMap.get(p.category_id) : null
               return (
-                <tr
-                  key={p.id}
-                  className={`border-b border-gray-800/50 hover:bg-gray-800/20 transition-colors ${
-                    !p.is_active ? 'opacity-40' : ''
-                  } ${isSelected ? 'bg-amber-500/5' : ''}`}
-                >
+                <tr key={p.id} className={`border-b border-gray-800/50 hover:bg-gray-800/20 transition-colors ${!p.is_active ? 'opacity-40' : ''} ${isSelected ? 'bg-amber-500/5' : ''}`}>
                   <td className="px-4 py-2">
-                    <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(p.id)}
-                      className="accent-amber-500 cursor-pointer" />
+                    <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(p.id)} className="accent-amber-500 cursor-pointer" />
                   </td>
                   {showSortOrder && (
                     <td className="px-2 py-2">
@@ -268,67 +337,37 @@ export default function AdminProducts() {
                       </div>
                     </td>
                   )}
+                  {/* Photo with upload */}
                   <td className="px-2 py-2">
-                    {p.image_url ? (
-                      <img
-                        src={p.image_url}
-                        alt=""
-                        className="w-9 h-9 object-contain rounded-lg bg-gray-800"
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                      />
-                    ) : (
-                      <div className="w-9 h-9 flex items-center justify-center rounded-lg bg-gray-800">
-                        <ImageOff size={14} className="text-gray-700" />
-                      </div>
-                    )}
+                    <PhotoCell product={p} onUploaded={load} />
                   </td>
                   <td className="px-4 py-2 font-mono text-xs text-gray-500 whitespace-nowrap">{p.sku}</td>
                   <td className="px-4 py-2 text-white max-w-xs">
                     <InlineEdit value={p.name_ru} onSave={(v) => updateField(p.id, 'name_ru', v)} wide />
                   </td>
-                  {!showSortOrder && (
-                    <td className="px-4 py-2">
-                      {cat ? (
-                        <span className="text-xs bg-gray-800 text-gray-400 px-2 py-0.5 rounded-lg">{cat.name_ru}</span>
-                      ) : (
-                        <span className="text-gray-700 text-xs">—</span>
-                      )}
-                    </td>
-                  )}
-                  <td className="px-4 py-2 text-right text-white whitespace-nowrap">
-                    <InlineEdit
-                      value={fmt(p.price_uzs)}
-                      onSave={(v) => updateField(p.id, 'price_uzs', v)}
-                      type="number"
+                  {/* Category selector */}
+                  <td className="px-4 py-2">
+                    <InlineCategorySelect
+                      categoryId={p.category_id}
+                      categories={categories}
+                      onSave={(id) => updateCategory(p.id, id)}
                     />
+                  </td>
+                  <td className="px-4 py-2 text-right text-white whitespace-nowrap">
+                    <InlineEdit value={fmt(p.price_uzs)} onSave={(v) => updateField(p.id, 'price_uzs', v)} type="number" />
                   </td>
                   <td className={`px-4 py-2 text-right ${stockColor(p.stock)}`}>
                     {p.stock === 0 ? 'Нет' : p.stock}
                   </td>
-                  {/* Featured star */}
                   <td className="px-4 py-2 text-center">
-                    <button
-                      onClick={() => toggleFeatured(p)}
-                      title={p.is_featured ? 'Убрать из рекомендуемых' : 'Добавить в рекомендуемые'}
-                      className={`w-6 h-6 mx-auto flex items-center justify-center rounded transition-colors ${
-                        p.is_featured
-                          ? 'text-amber-400 hover:text-amber-300'
-                          : 'text-gray-700 hover:text-amber-400'
-                      }`}
-                    >
+                    <button onClick={() => toggleFeatured(p)} title={p.is_featured ? 'Убрать из рекомендуемых' : 'В рекомендуемые'}
+                      className={`w-6 h-6 mx-auto flex items-center justify-center rounded transition-colors ${p.is_featured ? 'text-amber-400 hover:text-amber-300' : 'text-gray-700 hover:text-amber-400'}`}>
                       <Star size={12} fill={p.is_featured ? 'currentColor' : 'none'} />
                     </button>
                   </td>
-                  {/* Active toggle */}
                   <td className="px-4 py-2 text-center">
-                    <button
-                      onClick={() => toggleActive(p)}
-                      className={`text-xs px-2.5 py-1 rounded-full font-medium transition-colors ${
-                        p.is_active
-                          ? 'bg-green-500/10 text-green-400 hover:bg-red-500/10 hover:text-red-400'
-                          : 'bg-gray-700 text-gray-500 hover:bg-green-500/10 hover:text-green-400'
-                      }`}
-                    >
+                    <button onClick={() => toggleActive(p)}
+                      className={`text-xs px-2.5 py-1 rounded-full font-medium transition-colors ${p.is_active ? 'bg-green-500/10 text-green-400 hover:bg-red-500/10 hover:text-red-400' : 'bg-gray-700 text-gray-500 hover:bg-green-500/10 hover:text-green-400'}`}>
                       {p.is_active ? 'Да' : 'Нет'}
                     </button>
                   </td>
@@ -336,11 +375,7 @@ export default function AdminProducts() {
               )
             })}
             {!data?.products.length && (
-              <tr>
-                <td colSpan={showSortOrder ? 10 : 10} className="px-4 py-12 text-center text-gray-600">
-                  {search ? `Ничего не найдено` : 'Товаров нет'}
-                </td>
-              </tr>
+              <tr><td colSpan={10} className="px-4 py-12 text-center text-gray-600">{search ? 'Ничего не найдено' : 'Товаров нет'}</td></tr>
             )}
           </tbody>
         </table>
@@ -356,8 +391,7 @@ export default function AdminProducts() {
         </div>
       )}
       <p className="text-gray-700 text-xs mt-2">
-        Нажмите на название или цену для редактирования · <Star size={10} className="inline" /> — рекомендуемый товар
-        {showSortOrder && ' · Стрелки — изменить порядок в категории'}
+        Наведите на фото — загрузить · Нажмите на название/цену/категорию — редактировать · <Star size={10} className="inline" /> — рекомендуемый
       </p>
     </div>
   )

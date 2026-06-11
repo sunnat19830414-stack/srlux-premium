@@ -51,6 +51,8 @@ services:
       USD_TO_UZS_RATE: ${USD_TO_UZS_RATE:-12650}
       DOLIBARR_DEFAULT_CURRENCY: ${DOLIBARR_DEFAULT_CURRENCY:-USD}
       ENVIRONMENT: ${ENVIRONMENT:-production}
+    volumes:
+      - ./static/uploads:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy

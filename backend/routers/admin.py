@@ -2,11 +2,18 @@ import asyncio
 import logging
 import os
 import subprocess
+import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
+
+UPLOADS_DIR = Path("/app/uploads")
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB
 
 import crud
 from database import get_db
@@ -131,6 +138,24 @@ async def update_product(product_id: int, data: ProductUpdateIn, db: AsyncSessio
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     logger.info("Product %d updated: %s", product_id, list(updates.keys()))
+    return product
+
+
+@router.post("/products/{product_id}/image", response_model=AdminProductOut, dependencies=[Depends(_require_api_key)])
+async def upload_product_image(product_id: int, file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail="Разрешены только изображения (JPEG, PNG, WebP, GIF)")
+    data = await file.read()
+    if len(data) > MAX_IMAGE_SIZE:
+        raise HTTPException(status_code=413, detail="Файл слишком большой (макс. 5 МБ)")
+    ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}.get(file.content_type, "jpg")
+    filename = f"{uuid.uuid4().hex}.{ext}"
+    (UPLOADS_DIR / filename).write_bytes(data)
+    image_url = f"/static/uploads/{filename}"
+    product = await crud.admin_update_product(db, product_id, {"image_url": image_url, "image_manual": True})
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    logger.info("Product %d image uploaded: %s", product_id, filename)
     return product
 
 

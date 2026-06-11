@@ -45,6 +45,7 @@ class Product(Base):
     dolibarr_id = Column(Integer, unique=True, nullable=True, index=True)
     sort_order = Column(Integer, default=0, nullable=False)
     is_featured = Column(Boolean, default=False, nullable=False)
+    image_manual = Column(Boolean, default=False, nullable=False)
     parent_model = Column(String(100), nullable=True, index=True)
     color = Column(String(50), nullable=True)
     height_mm = Column(Integer, nullable=True)
