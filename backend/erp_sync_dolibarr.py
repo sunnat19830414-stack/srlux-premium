@@ -200,6 +200,36 @@ def convert_price(raw_price, currency: str, usd_rate: Decimal) -> Decimal:
     return price.quantize(Decimal("1"))
 
 
+def extract_price(p: dict) -> float:
+    """
+    Извлекает продажную цену из товара Dolibarr.
+    Dolibarr может хранить цену в базовом поле (price_ttc/price) ИЛИ
+    в мультипрайсе (multiprices_ttc, multiprices) при включённом режиме уровней цен.
+    """
+    # 1. Стандартные поля
+    for field in ("price_ttc", "price"):
+        val = p.get(field)
+        try:
+            if val and float(val) > 0:
+                return float(val)
+        except (TypeError, ValueError):
+            pass
+
+    # 2. Мультипрайс: dict {"1": "247.06", "2": "..."} — берём первый непустой
+    for field in ("multiprices_ttc", "multiprices"):
+        mp = p.get(field)
+        if isinstance(mp, dict):
+            for key in sorted(mp.keys()):
+                try:
+                    val = float(mp[key] or 0)
+                    if val > 0:
+                        return val
+                except (TypeError, ValueError):
+                    pass
+
+    return 0
+
+
 def build_parent_map(raw_products: list) -> dict:
     """
     Строит словарь {dolibarr_id: product_data} для родительских товаров.
@@ -410,7 +440,7 @@ def build_payload(
                 continue
 
             # Цена: Dolibarr хранит товары в USD — всегда конвертируем в UZS
-            raw_price = p.get("price_ttc") or p.get("price") or 0
+            raw_price = extract_price(p)
             price_uzs = convert_price(raw_price, DOLIBARR_DEFAULT_CURRENCY, usd_rate)
 
             if price_uzs <= 0:
