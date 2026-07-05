@@ -288,15 +288,22 @@ def fetch_document_photo(product_id: int, product_ref: str) -> str | None:
             docs = resp.json()
             if isinstance(docs, list):
                 for doc in docs:
-                    name = str(doc.get("name") or "").lower()
-                    if any(name.endswith(ext) for ext in IMAGE_EXTENSIONS):
+                    # Dolibarr may return name=null; check relativename for extension
+                    rel_name = str(doc.get("relativename") or doc.get("name") or "").lower()
+                    if any(rel_name.endswith(ext) for ext in IMAGE_EXTENSIONS):
                         relative = doc.get("relativename") or doc.get("name")
+                        level1 = doc.get("level1name") or ""
                         if relative:
+                            # Build proper path: level1name/relativename
+                            if level1 and not relative.startswith(level1):
+                                file_path = f"{level1}/{relative}"
+                            else:
+                                file_path = relative
                             viewimage_url = (
                                 f"{DOLIBARR_BASE_URL}/viewimage.php"
-                                f"?modulepart=product&file={relative}&cache=1"
+                                f"?modulepart=product&file={file_path}&cache=1"
                             )
-                            url = _download_dolibarr_photo(product_id, viewimage_url, name)
+                            url = _download_dolibarr_photo(product_id, viewimage_url, rel_name)
                             break
     except Exception as e:
         logger.debug(f"Документы для товара {product_id}: {e}")
