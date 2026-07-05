@@ -217,6 +217,63 @@ def build_parent_map(raw_products: list) -> dict:
     return parent_map
 
 
+def build_model_map(raw_products: list) -> tuple[dict, set]:
+    """
+    Выявляет «карточки моделей» по формату label: "REF/alias — описание".
+    Возвращает:
+      alias_map: {alias_upper → canonical_ref} для сопоставления вариантов с моделью
+      model_card_ids: set[int] — dolibarr_id карточек (не показываем как варианты)
+    """
+    alias_map: dict[str, str] = {}
+    model_card_ids: set[int] = set()
+    card_refs: list[str] = []
+
+    for p in raw_products:
+        ref = str(p.get("ref") or "").strip()
+        label = str(p.get("label") or "").strip()
+
+        if not ref or not label or " — " not in label:
+            continue
+
+        head = label.split(" — ")[0].strip()
+
+        # Карточка модели: часть до " — " начинается ровно с ref
+        if not head.upper().startswith(ref.upper()):
+            continue
+
+        # Извлекаем алиасы: "GZ2/G2T" → ["GZ2", "G2T"]
+        aliases = [a.strip() for a in head.split("/") if a.strip()]
+        if not aliases or aliases[0].upper() != ref.upper():
+            continue
+
+        pid = int(p.get("id") or 0)
+        if pid:
+            model_card_ids.add(pid)
+        canonical = ref  # ref карточки — каноническое имя модели
+        card_refs.append(ref)
+
+        for alias in aliases:
+            if alias:
+                alias_map[alias.upper()] = canonical
+
+    logger.info(
+        f"Карточек моделей: {len(model_card_ids)} | алиасов: {len(alias_map)} | "
+        f"модели: {', '.join(sorted(card_refs))}"
+    )
+    return alias_map, model_card_ids
+
+
+def find_parent_model(ref: str, sorted_prefixes: list, alias_map: dict) -> str | None:
+    """Возвращает canonical parent_model для ref, или None если не найдено."""
+    ref_upper = ref.upper()
+    for prefix in sorted_prefixes:
+        if ref_upper == prefix:
+            continue  # это сама карточка модели
+        if ref_upper.startswith(prefix):
+            return alias_map[prefix]
+    return None
+
+
 def _get_photos(p: dict) -> str | None:
     """Извлекает первый URL фото из поля photos товара."""
     # Пробуем разные поля — разные версии Dolibarr используют разные имена
@@ -322,13 +379,20 @@ def build_payload(
     product_to_cat: dict,
     usd_rate: Decimal,
     parent_map: dict | None = None,
+    alias_map: dict | None = None,
+    model_card_ids: set | None = None,
 ) -> list:
     """Превращает ответ Dolibarr в список для bulk-import."""
     payload = []
     skipped = 0
     parent_map = parent_map or {}
+    alias_map = alias_map or {}
+    model_card_ids = model_card_ids or set()
     inherited_photo = 0
     inherited_desc = 0
+
+    # Сортируем префиксы по длине (длинные сначала) — "BZV3" раньше "BZ"
+    sorted_prefixes = sorted(alias_map.keys(), key=len, reverse=True)
 
     # Log first product keys once for debugging
     if raw_products:
@@ -408,6 +472,13 @@ def build_payload(
                     cat_dolibarr_id = fallback_id
                     cat_name_ru = str(categories_map[fallback_id].get("label") or "Прочее")
 
+            # Определяем parent_model из таблицы алиасов
+            is_model_card = dolibarr_id in model_card_ids
+            if is_model_card:
+                parent_model = None
+            else:
+                parent_model = find_parent_model(sku, sorted_prefixes, alias_map)
+
             payload.append({
                 "dolibarr_id": dolibarr_id,
                 "sku": sku,
@@ -419,10 +490,11 @@ def build_payload(
                 "stock": stock,
                 "weight": weight,
                 "image_url": image_url,
-                "is_active": True,
+                "is_active": not is_model_card,
                 "category_dolibarr_id": cat_dolibarr_id,
                 "category_name_ru": cat_name_ru,
                 "category_name_uz": None,
+                "parent_model": parent_model,
             })
         except Exception as e:
             logger.warning(f"Ошибка обработки товара {p.get('id')}: {e}")
@@ -486,8 +558,16 @@ def main():
     # 3. Строим карту родительских товаров для fallback фото/описания
     parent_map = build_parent_map(raw_products)
 
-    # 4. Импортируем товары (категории управляются через setup_categories.py)
-    payload = build_payload(raw_products, categories_map, {}, usd_rate, parent_map)
+    # 4. Определяем модельные группы из структуры Dolibarr (label = "REF/alias — desc")
+    alias_map, model_card_ids = build_model_map(raw_products)
+
+    # 5. Импортируем товары
+    payload = build_payload(
+        raw_products, categories_map, {}, usd_rate,
+        parent_map=parent_map,
+        alias_map=alias_map,
+        model_card_ids=model_card_ids,
+    )
     send_to_backend(payload)
 
     logger.info("=== Синхронизация завершена ===")

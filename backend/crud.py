@@ -227,6 +227,7 @@ async def bulk_upsert_products(db: AsyncSession, items: list) -> dict:
                 if item.image_url or not existing.image_url:
                     existing.image_url = item.image_url
             existing.is_active = item.is_active
+            existing.parent_model = item.parent_model
             # Preserve manually set categories (negative dolibarr_id = custom)
             if category_id and existing.category_id is None:
                 existing.category_id = category_id
@@ -245,6 +246,7 @@ async def bulk_upsert_products(db: AsyncSession, items: list) -> dict:
                 stock=item.stock,
                 weight=item.weight,
                 image_url=item.image_url,
+                parent_model=item.parent_model,
                 is_active=item.is_active,
                 category_id=category_id,
             )

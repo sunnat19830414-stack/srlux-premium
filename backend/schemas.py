@@ -134,6 +134,7 @@ class ProductBulkItem(BaseModel):
     category_dolibarr_id: Optional[int] = None
     category_name_ru: Optional[str] = None
     category_name_uz: Optional[str] = None
+    parent_model: Optional[str] = None
 
 
 class BulkImportIn(BaseModel):
