@@ -10,6 +10,7 @@ import os
 import sys
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 
@@ -252,9 +253,12 @@ def _download_dolibarr_photo(product_id: int, viewimage_url: str, filename_hint:
     local_path = UPLOADS_DIR / local_name
     try:
         resp = requests.get(viewimage_url, headers=DOLIBARR_HEADERS, timeout=30)
-        if resp.status_code == 200 and len(resp.content) > 500:
+        ct = resp.headers.get("Content-Type", "")
+        if resp.status_code == 200 and "image" in ct and len(resp.content) > 500:
             local_path.write_bytes(resp.content)
             return f"/static/uploads/{local_name}"
+        elif resp.status_code != 200 or "image" not in ct:
+            logger.debug(f"Фото {product_id}: статус={resp.status_code} ct={ct} url={viewimage_url}")
     except Exception as e:
         logger.debug(f"Скачивание фото {product_id}: {e}")
     return None
@@ -301,7 +305,7 @@ def fetch_document_photo(product_id: int, product_ref: str) -> str | None:
                                 file_path = relative
                             viewimage_url = (
                                 f"{DOLIBARR_BASE_URL}/viewimage.php"
-                                f"?modulepart=product&file={file_path}&cache=1"
+                                f"?modulepart=product&file={quote(file_path)}&cache=1"
                             )
                             url = _download_dolibarr_photo(product_id, viewimage_url, rel_name)
                             break
