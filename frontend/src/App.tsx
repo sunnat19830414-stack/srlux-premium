@@ -4,8 +4,11 @@ import type { Product, Variant } from './api/client'
 import Footer from './components/Footer'
 import Header from './components/Header'
 import { LocaleProvider } from './contexts/LocaleContext'
+import AboutPage from './pages/AboutPage'
 import CartPage from './pages/CartPage'
 import CatalogPage from './pages/CatalogPage'
+import ContactsPage from './pages/ContactsPage'
+import DeliveryPage from './pages/DeliveryPage'
 import ModelPage from './pages/ModelPage'
 import ProductPage from './pages/ProductPage'
 import AdminLayout from './pages/admin/AdminLayout'
@@ -22,10 +25,23 @@ interface CartItem extends Product {
   cartQty: number
 }
 
+function loadCart(): CartItem[] {
+  try {
+    const raw = localStorage.getItem('srlux_cart')
+    return raw ? JSON.parse(raw) : []
+  } catch {
+    return []
+  }
+}
+
 export default function App() {
-  const [cartItems, setCartItems] = useState<CartItem[]>([])
+  const [cartItems, setCartItems] = useState<CartItem[]>(loadCart)
 
   const cartCount = cartItems.reduce((s, i) => s + i.cartQty, 0)
+
+  const saveCart = (items: CartItem[]) => {
+    try { localStorage.setItem('srlux_cart', JSON.stringify(items)) } catch {}
+  }
 
   const addToCart = (product: Product, variant: Variant | null, qty: number) => {
     setCartItems((prev) => {
@@ -33,11 +49,15 @@ export default function App() {
         (i) => i.id === product.id && (i.variant?.id ?? null) === (variant?.id ?? null),
       )
       if (idx >= 0) {
-        return prev.map((item, i) =>
+        const next = prev.map((item, i) =>
           i === idx ? { ...item, cartQty: item.cartQty + qty } : item,
         )
+        saveCart(next)
+        return next
       }
-      return [...prev, { ...product, variant, cartQty: qty }]
+      const next = [...prev, { ...product, variant, cartQty: qty }]
+      saveCart(next)
+      return next
     })
   }
 
@@ -68,7 +88,18 @@ export default function App() {
                     <Route path="/" element={<CatalogPage />} />
                     <Route path="/model/:code" element={<ModelPage onAddToCart={addToCart} />} />
                     <Route path="/product/:slug" element={<ProductPage onAddToCart={addToCart} />} />
-                    <Route path="/cart" element={<CartPage items={cartItems} onCartChange={setCartItems} />} />
+                    <Route
+                      path="/cart"
+                      element={
+                        <CartPage
+                          items={cartItems}
+                          onCartChange={(items) => { setCartItems(items); saveCart(items) }}
+                        />
+                      }
+                    />
+                    <Route path="/about" element={<AboutPage />} />
+                    <Route path="/contacts" element={<ContactsPage />} />
+                    <Route path="/delivery" element={<DeliveryPage />} />
                   </Routes>
                 </main>
                 <Footer />

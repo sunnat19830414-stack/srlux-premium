@@ -61,12 +61,27 @@ export default function Footer() {
           {/* Nav */}
           <div>
             <h3 className="text-gold font-semibold mb-4 uppercase tracking-wider text-sm">
-              Навигация
+              {t.catalog}
             </h3>
             <ul className="space-y-2">
               <li>
                 <Link to="/" className="text-gray-400 hover:text-gold text-sm transition-colors">
                   {t.catalog}
+                </Link>
+              </li>
+              <li>
+                <Link to="/about" className="text-gray-400 hover:text-gold text-sm transition-colors">
+                  {t.about}
+                </Link>
+              </li>
+              <li>
+                <Link to="/delivery" className="text-gray-400 hover:text-gold text-sm transition-colors">
+                  {t.delivery}
+                </Link>
+              </li>
+              <li>
+                <Link to="/contacts" className="text-gray-400 hover:text-gold text-sm transition-colors">
+                  {t.contacts}
                 </Link>
               </li>
             </ul>

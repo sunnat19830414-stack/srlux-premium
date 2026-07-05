@@ -45,6 +45,24 @@ export default function Header({ cartCount }: HeaderProps) {
             >
               {t.catalog}
             </Link>
+            <Link
+              to="/delivery"
+              className="text-sm font-medium text-gray-300 hover:text-gold transition-colors"
+            >
+              {t.delivery}
+            </Link>
+            <Link
+              to="/about"
+              className="text-sm font-medium text-gray-300 hover:text-gold transition-colors"
+            >
+              {t.about}
+            </Link>
+            <Link
+              to="/contacts"
+              className="text-sm font-medium text-gray-300 hover:text-gold transition-colors"
+            >
+              {t.contacts}
+            </Link>
           </nav>
 
           {/* Right controls */}
@@ -103,6 +121,27 @@ export default function Header({ cartCount }: HeaderProps) {
             onClick={() => setMenuOpen(false)}
           >
             {t.catalog}
+          </Link>
+          <Link
+            to="/delivery"
+            className="block py-2 text-gray-300 hover:text-gold transition-colors"
+            onClick={() => setMenuOpen(false)}
+          >
+            {t.delivery}
+          </Link>
+          <Link
+            to="/about"
+            className="block py-2 text-gray-300 hover:text-gold transition-colors"
+            onClick={() => setMenuOpen(false)}
+          >
+            {t.about}
+          </Link>
+          <Link
+            to="/contacts"
+            className="block py-2 text-gray-300 hover:text-gold transition-colors"
+            onClick={() => setMenuOpen(false)}
+          >
+            {t.contacts}
           </Link>
           <Link
             to="/cart"

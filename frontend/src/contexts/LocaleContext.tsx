@@ -39,6 +39,9 @@ const RU = {
   phone: 'Телефон',
   address: 'Адрес',
   workHours: 'Режим работы',
+  about: 'О компании',
+  contacts: 'Контакты',
+  delivery: 'Доставка и оплата',
 }
 
 const UZ: typeof RU = {
@@ -78,6 +81,9 @@ const UZ: typeof RU = {
   phone: 'Telefon',
   address: 'Manzil',
   workHours: 'Ish vaqti',
+  about: 'Kompaniya haqida',
+  contacts: 'Aloqa',
+  delivery: 'Yetkazib berish va to\'lov',
 }
 
 const translations = { ru: RU, uz: UZ }

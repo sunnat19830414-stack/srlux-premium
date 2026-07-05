@@ -233,17 +233,48 @@ def _get_photos(p: dict) -> str | None:
 DOLIBARR_BASE_URL = DOLIBARR_URL.replace("/api/index.php", "").rstrip("/")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
-# Кэш: product_id -> image_url (чтобы не дёргать API дважды)
+UPLOADS_DIR = Path("/app/uploads")
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Кэш: product_id -> local_url (чтобы не скачивать дважды за один запуск)
 _photo_cache: dict[int, str | None] = {}
+
+
+def _download_dolibarr_photo(product_id: int, viewimage_url: str, filename_hint: str) -> str | None:
+    """Скачивает фото из Dolibarr с API-ключом и сохраняет локально."""
+    from pathlib import Path as _P
+    ext = _P(filename_hint).suffix.lower().lstrip(".")
+    if ext not in ("jpg", "jpeg", "png", "webp", "gif"):
+        ext = "jpg"
+    if ext == "jpeg":
+        ext = "jpg"
+    local_name = f"dol_{product_id}.{ext}"
+    local_path = UPLOADS_DIR / local_name
+    try:
+        resp = requests.get(viewimage_url, headers=DOLIBARR_HEADERS, timeout=30)
+        if resp.status_code == 200 and len(resp.content) > 500:
+            local_path.write_bytes(resp.content)
+            return f"/static/uploads/{local_name}"
+    except Exception as e:
+        logger.debug(f"Скачивание фото {product_id}: {e}")
+    return None
 
 
 def fetch_document_photo(product_id: int, product_ref: str) -> str | None:
     """
-    Получает URL первого изображения из вкладки 'Связанные файлы' продукта.
-    Использует GET /documents?modulepart=product&id={id}.
+    Скачивает первое изображение из Dolibarr Documents, сохраняет локально,
+    возвращает /static/uploads/... URL.
     """
     if product_id in _photo_cache:
         return _photo_cache[product_id]
+
+    # Если файл уже скачан в этот запуск — используем его
+    for ext in ("jpg", "png", "webp", "gif"):
+        cached = UPLOADS_DIR / f"dol_{product_id}.{ext}"
+        if cached.exists() and cached.stat().st_size > 500:
+            url = f"/static/uploads/dol_{product_id}.{ext}"
+            _photo_cache[product_id] = url
+            return url
 
     url = None
     try:
@@ -261,10 +292,11 @@ def fetch_document_photo(product_id: int, product_ref: str) -> str | None:
                     if any(name.endswith(ext) for ext in IMAGE_EXTENSIONS):
                         relative = doc.get("relativename") or doc.get("name")
                         if relative:
-                            url = (
+                            viewimage_url = (
                                 f"{DOLIBARR_BASE_URL}/viewimage.php"
                                 f"?modulepart=product&file={relative}&cache=1"
                             )
+                            url = _download_dolibarr_photo(product_id, viewimage_url, name)
                             break
     except Exception as e:
         logger.debug(f"Документы для товара {product_id}: {e}")
