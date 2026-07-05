@@ -9,6 +9,7 @@ import logging
 import os
 import sys
 from decimal import Decimal
+from pathlib import Path
 
 import requests
 
@@ -242,8 +243,7 @@ _photo_cache: dict[int, str | None] = {}
 
 def _download_dolibarr_photo(product_id: int, viewimage_url: str, filename_hint: str) -> str | None:
     """Скачивает фото из Dolibarr с API-ключом и сохраняет локально."""
-    from pathlib import Path as _P
-    ext = _P(filename_hint).suffix.lower().lstrip(".")
+    ext = Path(filename_hint).suffix.lower().lstrip(".")
     if ext not in ("jpg", "jpeg", "png", "webp", "gif"):
         ext = "jpg"
     if ext == "jpeg":
