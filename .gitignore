@@ -1,3 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+
+# Manual snapshot backups (crud.py.bak-20260711160132 etc.) — git history
+# already keeps these, snapshots are just clutter
+*.bak
+*.bak-*
+*.bak2
+*.bak2-*
+*.bak3
+*.bak3-*
+*.bak_*
+
+# Runtime product photos / order uploads (mounted volume, not source —
+# see docker-compose.yml ./static:/var/www/static)
+/static/products/
+/static/uploads/
+
 # Logs
 logs
 *.log
