@@ -7,7 +7,10 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from models import Category, Order, OrderItem, Product, ProductVariant
+from models import (
+    CatalogPhoto, CatalogSettings, Category, Order, OrderItem,
+    Product, ProductImage, ProductVariant,
+)
 
 
 # ── Slugify helper ─────────────────────────────────────────────────────────────
@@ -60,36 +63,350 @@ async def get_product_by_slug(db: AsyncSession, slug: str):
 # ── Model cards (Variant 1) ────────────────────────────────────────────────────
 
 async def get_model_cards(db: AsyncSession):
+    # Grouped models (radiators, towel warmers, etc. — products that share a
+    # parent_model, e.g. colour/size variants of the same physical item) are
+    # unioned with genuinely standalone products (parent_model IS NULL — one-off
+    # items like plumbing fittings or thermostats that aren't variants of
+    # anything) so that every priced, active product is reachable from the
+    # catalog, not just the ones that happen to belong to a recognised model.
     sql = text("""
         SELECT
             p.parent_model                                        AS code,
+            MIN(p.sort_order)                                     AS sort_order,
             MIN(p.name_ru)                                        AS name_ru,
+            MIN(p.name_uz)                                        AS name_uz,
             MIN(c.name_ru)                                        AS category_name,
-            MIN(p.price_uzs)                                      AS price_from,
-            MAX(p.price_uzs)                                      AS price_to,
+            MIN(c.name_uz)                                        AS category_name_uz,
+            MIN(c.id)                                             AS category_id,
+            array_agg(DISTINCT c.id) FILTER (WHERE c.id IS NOT NULL) AS category_ids,
+            -- G2T_1800-10G-БЕЛЫЙ / G3T_1800-6G-БЕЛЫЙ are paint-order
+            -- placeholders, not real stocked SKUs: 0 stock, no height_mm/
+            -- sections, and a manually-entered draft price that's well below
+            -- the real painted price (confirmed 2026-07-13) — the actual
+            -- sale price is written in by hand at time of sale, so they must
+            -- not drag down the model's displayed "from" price. Falls back
+            -- to the unfiltered MIN/MAX if a model's only variants happen to
+            -- be excluded ones, so a price is never silently hidden.
+            COALESCE(
+                MIN(p.price_uzs) FILTER (WHERE p.sku NOT IN ('G2T_1800-10G-БЕЛЫЙ', 'G3T_1800-6G-БЕЛЫЙ')),
+                MIN(p.price_uzs)
+            )                                                      AS price_from,
+            COALESCE(
+                MAX(p.price_uzs) FILTER (WHERE p.sku NOT IN ('G2T_1800-10G-БЕЛЫЙ', 'G3T_1800-6G-БЕЛЫЙ')),
+                MAX(p.price_uzs)
+            )                                                      AS price_to,
             COALESCE(SUM(p.stock), 0)                             AS total_stock,
             array_agg(DISTINCT p.color)
                 FILTER (WHERE p.color IS NOT NULL)                AS colors,
             COALESCE(
-                MAX(p.image_url) FILTER (WHERE p.color = 'white'),
+                MAX(p.image_url) FILTER (WHERE p.color = 'white' AND p.sku NOT IN ('JDC22-1200-400W')),
+                MAX(p.image_url) FILTER (WHERE p.image_url IS NOT NULL AND p.sku NOT IN ('JDC22-1200-400W')),
                 MAX(p.image_url) FILTER (WHERE p.image_url IS NOT NULL)
-            )                                                     AS image_url
+            )                                                     AS image_url,
+            -- One representative photo per category branch the model spans,
+            -- so a model sold in both a tall/vertical and a short/horizontal
+            -- size (e.g. GZ2, GZ3) shows a photo matching whichever branch
+            -- the customer is actually browsing, instead of one arbitrary
+            -- cover photo that may show the wrong orientation. JDC22-1200-400W
+            -- is excluded as a *cover* candidate: its own attached photo is a
+            -- mismatched product shot (confirmed 2026-07-13), so picking it
+            -- as the representative for its branch would show the wrong item
+            -- — the SKU itself still displays its own (wrong) photo on its
+            -- own product page until a correct one is uploaded in Dolibarr.
+            COALESCE(
+                jsonb_object_agg(c.id, p.image_url)
+                    FILTER (WHERE c.id IS NOT NULL AND p.image_url IS NOT NULL AND p.sku NOT IN ('JDC22-1200-400W')),
+                jsonb_object_agg(c.id, p.image_url)
+                    FILTER (WHERE c.id IS NOT NULL AND p.image_url IS NOT NULL)
+            )                                                     AS category_images
         FROM products p
         LEFT JOIN categories c ON c.id = p.category_id
         WHERE p.is_active = true AND p.parent_model IS NOT NULL
         GROUP BY p.parent_model
-        ORDER BY p.parent_model
+
+        UNION ALL
+
+        SELECT
+            p.sku                                                 AS code,
+            p.sort_order                                           AS sort_order,
+            p.name_ru                                              AS name_ru,
+            p.name_uz                                              AS name_uz,
+            c.name_ru                                              AS category_name,
+            c.name_uz                                              AS category_name_uz,
+            c.id                                                    AS category_id,
+            CASE WHEN c.id IS NOT NULL THEN ARRAY[c.id] ELSE ARRAY[]::integer[] END AS category_ids,
+            p.price_uzs                                            AS price_from,
+            p.price_uzs                                            AS price_to,
+            COALESCE(p.stock, 0)                                   AS total_stock,
+            NULL                                                   AS colors,
+            p.image_url                                            AS image_url,
+            CASE WHEN c.id IS NOT NULL AND p.image_url IS NOT NULL
+                 THEN jsonb_build_object(c.id::text, p.image_url)
+                 ELSE '{}'::jsonb
+            END                                                     AS category_images
+        FROM products p
+        LEFT JOIN categories c ON c.id = p.category_id
+        WHERE p.is_active = true AND p.parent_model IS NULL AND p.price_uzs > 0
+
+        ORDER BY sort_order, code
     """)
     result = await db.execute(sql)
     return result.mappings().all()
+
+
+async def get_catalog_models(db: AsyncSession, category_scope: Optional[list[int]] = None):
+    """
+    Model list for the admin-only PDF catalog generator. Same grouping as
+    get_model_cards (parent_model groups + standalone products), but adds
+    price_usd_from/price_usd_to (the raw Dolibarr retail price, never
+    shown on the public site/API) and attaches each model's catalog-only
+    photo overrides from catalog_photos — kept as a *separate* table/join
+    rather than reusing Product.image_url so that fixing a photo for the
+    printed catalog never touches what customers see on srlux.uz.
+
+    Some Dolibarr "model" families (e.g. GZ2/GZ3 "Column" radiators) contain
+    SKUs that live in genuinely different site categories — a tall vertical
+    variant and a short horizontal one sharing the same model code. The
+    per-category `category_images` map (same proven mechanism already used by
+    the public get_model_cards/site catalog for this exact GZ2/GZ3 case,
+    confirmed 2026-07-13) lets category_scope pick the photo matching whichever
+    branch the caller is actually generating/previewing, instead of one
+    arbitrary global cover photo that may show the wrong orientation.
+    """
+    sql = text("""
+        SELECT
+            p.parent_model                                        AS code,
+            MIN(p.sort_order)                                     AS sort_order,
+            MIN(p.name_ru)                                        AS name_ru,
+            MIN(p.description_ru)                                 AS description_ru,
+            MIN(c.name_ru)                                        AS category_name,
+            MIN(c.id)                                             AS category_id,
+            array_agg(DISTINCT c.id) FILTER (WHERE c.id IS NOT NULL) AS category_ids,
+            array_agg(DISTINCT p.color) FILTER (WHERE p.color IS NOT NULL) AS colors,
+            array_agg(DISTINCT p.sections) FILTER (WHERE p.sections IS NOT NULL) AS sections_list,
+            array_agg(DISTINCT p.height_mm) FILTER (WHERE p.height_mm IS NOT NULL) AS height_mm_list,
+            COALESCE(
+                MAX(p.image_url) FILTER (WHERE p.color = 'white' AND p.sku NOT IN ('JDC22-1200-400W')),
+                MAX(p.image_url) FILTER (WHERE p.image_url IS NOT NULL AND p.sku NOT IN ('JDC22-1200-400W')),
+                MAX(p.image_url) FILTER (WHERE p.image_url IS NOT NULL)
+            )                                                     AS image_url,
+            COALESCE(
+                jsonb_object_agg(c.id, p.image_url)
+                    FILTER (WHERE c.id IS NOT NULL AND p.image_url IS NOT NULL AND p.sku NOT IN ('JDC22-1200-400W')),
+                jsonb_object_agg(c.id, p.image_url)
+                    FILTER (WHERE c.id IS NOT NULL AND p.image_url IS NOT NULL)
+            )                                                     AS category_images,
+            COALESCE(
+                MIN(p.price_usd) FILTER (WHERE p.sku NOT IN ('G2T_1800-10G-БЕЛЫЙ', 'G3T_1800-6G-БЕЛЫЙ', 'G3T-300-32W') AND p.price_usd > 0),
+                MIN(p.price_usd) FILTER (WHERE p.price_usd > 0)
+            )                                                     AS price_usd_from,
+            COALESCE(
+                MAX(p.price_usd) FILTER (WHERE p.sku NOT IN ('G2T_1800-10G-БЕЛЫЙ', 'G3T_1800-6G-БЕЛЫЙ', 'G3T-300-32W') AND p.price_usd > 0),
+                MAX(p.price_usd) FILTER (WHERE p.price_usd > 0)
+            )                                                     AS price_usd_to,
+            json_agg(
+                json_build_object(
+                    'height_mm', p.height_mm, 'sections', p.sections, 'price_usd', p.price_usd,
+                    'weight', p.weight, 'power_w_dt50', p.power_w_dt50,
+                    'width_mm', p.width_mm, 'depth_mm', p.depth_mm,
+                    'color', p.color, 'category_id', c.id
+                )
+                ORDER BY p.height_mm NULLS FIRST, p.sections NULLS FIRST
+            ) FILTER (WHERE p.sku NOT IN ('G2T_1800-10G-БЕЛЫЙ', 'G3T_1800-6G-БЕЛЫЙ', 'G3T-300-32W') AND p.price_usd > 0)
+                                                                    AS variants_raw
+        FROM products p
+        LEFT JOIN categories c ON c.id = p.category_id
+        WHERE p.is_active = true AND p.parent_model IS NOT NULL
+        GROUP BY p.parent_model
+
+        UNION ALL
+
+        SELECT
+            p.sku                                                 AS code,
+            p.sort_order                                          AS sort_order,
+            p.name_ru                                              AS name_ru,
+            p.description_ru                                       AS description_ru,
+            c.name_ru                                              AS category_name,
+            c.id                                                    AS category_id,
+            CASE WHEN c.id IS NOT NULL THEN ARRAY[c.id] ELSE ARRAY[]::integer[] END AS category_ids,
+            CASE WHEN p.color IS NOT NULL THEN ARRAY[p.color] ELSE ARRAY[]::varchar[] END AS colors,
+            CASE WHEN p.sections IS NOT NULL THEN ARRAY[p.sections] ELSE ARRAY[]::integer[] END AS sections_list,
+            CASE WHEN p.height_mm IS NOT NULL THEN ARRAY[p.height_mm] ELSE ARRAY[]::integer[] END AS height_mm_list,
+            p.image_url                                            AS image_url,
+            CASE WHEN c.id IS NOT NULL AND p.image_url IS NOT NULL
+                 THEN jsonb_build_object(c.id::text, p.image_url)
+                 ELSE '{}'::jsonb
+            END                                                     AS category_images,
+            p.price_usd                                            AS price_usd_from,
+            p.price_usd                                            AS price_usd_to,
+            NULL::json                                             AS variants_raw
+        FROM products p
+        LEFT JOIN categories c ON c.id = p.category_id
+        WHERE p.is_active = true AND p.parent_model IS NULL AND p.price_uzs > 0
+
+        ORDER BY sort_order, code
+    """)
+    result = await db.execute(sql)
+    rows = [dict(r) for r in result.mappings().all()]
+
+    scope_set = set(category_scope) if category_scope else None
+    for m in rows:
+        images = m.get("category_images") or {}
+        if scope_set and images:
+            match = next((cid for cid in (m["category_ids"] or []) if cid in scope_set and str(cid) in images), None)
+            if match is not None:
+                m["image_url"] = images[str(match)]
+        m.pop("category_images", None)
+
+        # Colour doesn't affect price on this data (confirmed — e.g. GZ3's
+        # 1800mm/8-section variant prices only differ by a rounding cent
+        # across colours), so collapse the raw per-SKU rows down to one row
+        # per (height_mm, sections, category_id) combo for the printed
+        # variants table. category_id is part of the key because some model
+        # families (GZ2/GZ3 "Column" radiators) have SKUs split across a
+        # vertical and a horizontal category branch, and the table needs to
+        # keep those separate rather than merge them.
+        #
+        # "raw"/грунт (unpainted primer-only) SKUs are excluded from weight/
+        # width/depth/colour roll-ups by explicit request (2026-07-15) — they
+        # aren't a sellable finish, and their weight in particular is
+        # materially different from the painted colours at the same size
+        # (e.g. GZ2's 1800mm/6-section "без краски" SKU weighs 10kg vs 25kg
+        # painted), which would otherwise show a misleading "10–25" range for
+        # what customers actually buy. Price is unaffected either way, so raw
+        # SKUs still count toward it.
+        groups: dict[tuple, dict] = {}
+        for v in m.pop("variants_raw", None) or []:
+            key = (v.get("height_mm"), v.get("sections"), v.get("category_id"))
+            g = groups.get(key)
+            if g is None:
+                g = {
+                    "height_mm": v.get("height_mm"),
+                    "sections": v.get("sections"),
+                    "category_id": v.get("category_id"),
+                    "prices": [],
+                    "weights": [],
+                    "powers": [],
+                    "widths": [],
+                    "depths": [],
+                    "colors": [],
+                }
+                groups[key] = g
+            # Distinct SKUs sharing one (height_mm, sections, category_id) row
+            # can have different prices (e.g. JDC22's width varies within one
+            # row) — track every price seen, same as weight/power/etc, instead
+            # of keeping whichever SKU happened to be first in json_agg's
+            # order (that picked an arbitrary, sometimes-wrong price and made
+            # the printed price shift between syncs — reported 2026-07-15).
+            if v.get("price_usd") is not None:
+                price_val = float(v["price_usd"])
+                if price_val not in g["prices"]:
+                    g["prices"].append(price_val)
+            if v.get("color") == "raw":
+                continue
+            if v.get("weight") is not None and v["weight"] not in g["weights"]:
+                g["weights"].append(v["weight"])
+            if v.get("power_w_dt50") is not None and v["power_w_dt50"] not in g["powers"]:
+                g["powers"].append(v["power_w_dt50"])
+            if v.get("width_mm") is not None and v["width_mm"] not in g["widths"]:
+                g["widths"].append(v["width_mm"])
+            if v.get("depth_mm") is not None and v["depth_mm"] not in g["depths"]:
+                g["depths"].append(v["depth_mm"])
+            if v.get("color") and v["color"] not in g["colors"]:
+                g["colors"].append(v["color"])
+        m["variants"] = sorted(
+            groups.values(),
+            key=lambda v: (v.get("height_mm") is None, v.get("height_mm") or 0,
+                            v.get("sections") is None, v.get("sections") or 0),
+        )
+
+    photos_result = await db.execute(
+        text("SELECT id, model_code, image_url, sort_order FROM catalog_photos ORDER BY model_code, sort_order")
+    )
+    photos_by_model: dict[str, list[dict]] = {}
+    for row in photos_result.mappings().all():
+        photos_by_model.setdefault(row["model_code"], []).append(dict(row))
+
+    for m in rows:
+        m["photos"] = photos_by_model.get(m["code"], [])
+        if m["photos"]:
+            m["image_url"] = m["photos"][0]["image_url"]
+
+    return rows
+
+
+async def add_catalog_photo(db: AsyncSession, model_code: str, image_url: str):
+    max_sort = await db.scalar(
+        text("SELECT COALESCE(MAX(sort_order), -1) FROM catalog_photos WHERE model_code = :code"),
+        {"code": model_code},
+    )
+    photo = CatalogPhoto(model_code=model_code, image_url=image_url, sort_order=max_sort + 1)
+    db.add(photo)
+    await db.commit()
+    await db.refresh(photo)
+    return photo
+
+
+async def set_catalog_photo_primary(db: AsyncSession, photo_id: int):
+    photo = await db.get(CatalogPhoto, photo_id)
+    if not photo:
+        return None
+    others = (await db.execute(
+        select(CatalogPhoto)
+        .where(CatalogPhoto.model_code == photo.model_code, CatalogPhoto.id != photo_id)
+        .order_by(CatalogPhoto.sort_order)
+    )).scalars().all()
+    photo.sort_order = 0
+    for i, other in enumerate(others, start=1):
+        other.sort_order = i
+    await db.commit()
+    return photo
+
+
+async def delete_catalog_photo(db: AsyncSession, photo_id: int) -> bool:
+    photo = await db.get(CatalogPhoto, photo_id)
+    if not photo:
+        return False
+    await db.delete(photo)
+    await db.commit()
+    return True
+
+
+async def get_catalog_settings(db: AsyncSession):
+    settings = await db.get(CatalogSettings, 1)
+    if not settings:
+        settings = CatalogSettings(id=1)
+        db.add(settings)
+        await db.commit()
+        await db.refresh(settings)
+    return settings
+
+
+async def update_catalog_settings(db: AsyncSession, updates: dict):
+    settings = await get_catalog_settings(db)
+    for key, value in updates.items():
+        if value is not None:
+            setattr(settings, key, value)
+    await db.commit()
+    await db.refresh(settings)
+    return settings
 
 
 async def get_model_detail(db: AsyncSession, code: str):
     result = await db.execute(
         select(Product)
         .where(Product.parent_model == code, Product.is_active == True)
-        .options(selectinload(Product.category))
+        .options(selectinload(Product.category), selectinload(Product.images))
         .order_by(Product.color, Product.sections, Product.height_mm)
+    )
+    products = result.scalars().all()
+    if products:
+        return products
+    # Fallback: `code` may be a standalone product's own SKU (no parent_model)
+    result = await db.execute(
+        select(Product)
+        .where(Product.sku == code, Product.is_active == True)
+        .options(selectinload(Product.category), selectinload(Product.images))
     )
     return result.scalars().all()
 
@@ -97,20 +414,27 @@ async def get_model_detail(db: AsyncSession, code: str):
 # ── Categories ─────────────────────────────────────────────────────────────────
 
 async def get_categories(db: AsyncSession):
-    # Only categories that have at least one active product
-    stmt = (
-        select(Category)
-        .where(
-            Category.id.in_(
-                select(Product.category_id)
-                .where(Product.is_active == True, Product.category_id.isnot(None))
-                .distinct()
-            )
-        )
-        .order_by(Category.name_ru)
-    )
-    result = await db.execute(stmt)
-    return result.scalars().all()
+    # Categories with at least one active product, plus every ancestor of
+    # those (so parent nodes like "Радиаторы" > "Вертикальные" show up in the
+    # tree even though products are only ever linked to the leaf category).
+    all_cats = (await db.execute(select(Category))).scalars().all()
+    direct_ids = set((await db.execute(
+        select(Product.category_id)
+        .where(Product.is_active == True, Product.category_id.isnot(None))
+        .distinct()
+    )).scalars().all())
+
+    by_id = {c.id: c for c in all_cats}
+    included: set[int] = set()
+    for cid in direct_ids:
+        cur = by_id.get(cid)
+        while cur and cur.id not in included:
+            included.add(cur.id)
+            cur = by_id.get(cur.parent_id) if cur.parent_id else None
+
+    result = [c for c in all_cats if c.id in included]
+    result.sort(key=lambda c: (c.sort_order, c.name_ru))
+    return result
 
 
 async def get_or_create_category(
@@ -179,6 +503,18 @@ async def bulk_upsert_categories(db: AsyncSession, items: list) -> dict:
             )
             db.add(cat)
         upserted += 1
+    await db.flush()
+
+    # Second pass: resolve parent_dolibarr_id -> parent_id now that every
+    # category in this batch has been created and has an id.
+    for item in items:
+        if not item.parent_dolibarr_id:
+            continue
+        cat = await db.scalar(select(Category).where(Category.dolibarr_id == item.dolibarr_id))
+        parent = await db.scalar(select(Category).where(Category.dolibarr_id == item.parent_dolibarr_id))
+        if cat and parent:
+            cat.parent_id = parent.id
+
     await db.commit()
     return {"upserted": upserted}
 
@@ -208,28 +544,54 @@ async def bulk_upsert_products(db: AsyncSession, items: list) -> dict:
         # Try find existing by dolibarr_id or sku
         existing = await db.scalar(
             select(Product).where(Product.dolibarr_id == item.dolibarr_id)
+            .options(selectinload(Product.images))
         )
         if not existing:
             existing = await db.scalar(
                 select(Product).where(Product.sku == item.sku)
+                .options(selectinload(Product.images))
             )
 
         if existing:
+            # Keep sku in sync with Dolibarr's ref — otherwise a rename in
+            # Dolibarr leaves the site showing the old ref forever, since
+            # products are matched by dolibarr_id (stable) not sku.
+            if item.sku and item.sku != existing.sku:
+                existing.sku = item.sku
             existing.name_ru = item.name_ru
-            existing.name_uz = item.name_uz
+            # Dolibarr has no working multilang API in this install (verified:
+            # writes silently don't persist) — uz translations are maintained
+            # directly on the site instead, so never let a sync's blank
+            # name_uz/description_uz (Dolibarr always sends None for these)
+            # wipe out a translation that's already been filled in.
+            if item.name_uz:
+                existing.name_uz = item.name_uz
             existing.description_ru = item.description_ru
-            existing.description_uz = item.description_uz
+            if item.description_uz:
+                existing.description_uz = item.description_uz
             existing.price_uzs = item.price_uzs
+            existing.price_usd = item.price_usd
             existing.stock = item.stock
             existing.weight = item.weight
+            existing.width_mm = item.width_mm
+            existing.depth_mm = item.depth_mm
             # Never overwrite manually uploaded photos
             if not getattr(existing, 'image_manual', False):
                 if item.image_url or not existing.image_url:
                     existing.image_url = item.image_url
+                # Gallery photos come entirely from Dolibarr — always mirror
+                # whatever is currently attached there (replace-all).
+                existing.images = [
+                    ProductImage(image_url=url, sort_order=i)
+                    for i, url in enumerate(item.images)
+                ]
             existing.is_active = item.is_active
             existing.parent_model = item.parent_model
-            # Preserve manually set categories (negative dolibarr_id = custom)
-            if category_id and existing.category_id is None:
+            # Dolibarr is the source of truth for category assignment — always
+            # mirror it, so re-categorizing a product there (e.g. moving it
+            # between sub-categories) actually takes effect on resync instead
+            # of being stuck on whatever category it first synced under.
+            if category_id:
                 existing.category_id = category_id
         else:
             slug = _slugify(item.name_ru)
@@ -243,12 +605,19 @@ async def bulk_upsert_products(db: AsyncSession, items: list) -> dict:
                 description_ru=item.description_ru,
                 description_uz=item.description_uz,
                 price_uzs=item.price_uzs,
+                price_usd=item.price_usd,
                 stock=item.stock,
                 weight=item.weight,
+                width_mm=item.width_mm,
+                depth_mm=item.depth_mm,
                 image_url=item.image_url,
                 parent_model=item.parent_model,
                 is_active=item.is_active,
                 category_id=category_id,
+                images=[
+                    ProductImage(image_url=url, sort_order=i)
+                    for i, url in enumerate(item.images)
+                ],
             )
             db.add(product)
 
@@ -523,6 +892,7 @@ async def create_order(db: AsyncSession, data, items_data: list):
             "quantity": item_in.quantity,
             "unit_price_snapshot": unit_price,
             "product_name_snapshot": product.name_ru,
+            "custom_ral_note": getattr(item_in, "custom_ral_note", None),
         })
 
     order_number = f"ORD-{uuid.uuid4().hex[:8].upper()}"
@@ -533,6 +903,8 @@ async def create_order(db: AsyncSession, data, items_data: list):
         customer_address=data.customer_address,
         total_uzs=total,
         status="pending",
+        project_file_url=getattr(data, "project_file_url", None),
+        project_file_name=getattr(data, "project_file_name", None),
     )
     db.add(order)
     await db.flush()
