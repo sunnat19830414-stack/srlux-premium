@@ -1,14 +1,23 @@
 import { Clock, Mail, MapPin, MessageCircle, Phone } from 'lucide-react'
+import { useEffect } from 'react'
 import { useLocale } from '../contexts/LocaleContext'
+import { setSeo } from '../lib/seo'
 
 export default function ContactsPage() {
   const { lang } = useLocale()
 
-  const PHONE_PRIMARY = '+998 71 123 45 67'
-  const PHONE_SECONDARY = '+998 90 123 45 67'
-  const ADDRESS = lang === 'uz' ? 'Toshkent sh., Amir Temur ko\'chasi 107B' : 'г. Ташкент, ул. Амира Темура 107Б'
-  const HOURS_WEEKDAY = lang === 'uz' ? 'Du–Ju: 9:00–18:00' : 'Пн–Пт: 9:00–18:00'
-  const HOURS_SAT = lang === 'uz' ? 'Shanba: 10:00–15:00' : 'Сб: 10:00–15:00'
+  useEffect(() => {
+    setSeo({
+      title: lang === 'uz' ? 'Kontaktlar — SR Lux' : 'Контакты — SR Lux',
+      description: lang === 'uz' ? "SR Lux bilan bog'laning: telefon, WhatsApp, Toshkentdagi shourum manzili, ish vaqti." : 'Свяжитесь с SR Lux: телефон, WhatsApp, адрес шоурума в Ташкенте, режим работы.',
+      path: '/contacts',
+    })
+  }, [lang])
+
+  const PHONE_PRIMARY = '+998 95 185 47 97'
+  const PHONE_SECONDARY = '+998 90 185 47 97'
+  const ADDRESS = lang === 'uz' ? "Toshkent sh., Usta Shirin ko'chasi 111D" : 'г. Ташкент, ул. Уста Ширин 111D'
+  const HOURS_WEEKDAY = lang === 'uz' ? 'Du–Shanba: 9:00–18:00' : 'Пн–Сб: 9:00–18:00'
   const HOURS_SUN = lang === 'uz' ? 'Yakshanba: dam olish kuni' : 'Вс: выходной'
 
   return (
@@ -73,7 +82,7 @@ export default function ContactsPage() {
                 <h2 className="text-white font-semibold">WhatsApp</h2>
               </div>
               <a
-                href="https://wa.me/998901234567"
+                href="https://wa.me/998951854797"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-green-700 hover:bg-green-600 text-white font-semibold text-sm transition-colors"
@@ -121,7 +130,7 @@ export default function ContactsPage() {
                   : 'Офис, 3 этаж, каб. 5'}
               </p>
               <a
-                href="https://maps.google.com/?q=41.295278,69.253889"
+                href="https://maps.google.com/?q=Tashkent+Usta+Shirin+111D"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 text-sm text-gold hover:underline"
@@ -143,15 +152,9 @@ export default function ContactsPage() {
               <ul className="space-y-2">
                 <li className="flex justify-between text-sm">
                   <span className="text-gray-400">
-                    {lang === 'uz' ? 'Du–Ju' : 'Пн–Пт'}
+                    {lang === 'uz' ? 'Du–Shanba' : 'Пн–Сб'}
                   </span>
                   <span className="text-white font-medium">9:00 – 18:00</span>
-                </li>
-                <li className="flex justify-between text-sm">
-                  <span className="text-gray-400">
-                    {lang === 'uz' ? 'Shanba' : 'Суббота'}
-                  </span>
-                  <span className="text-white font-medium">10:00 – 15:00</span>
                 </li>
                 <li className="flex justify-between text-sm">
                   <span className="text-gray-400">
@@ -169,10 +172,10 @@ export default function ContactsPage() {
               <div className="text-center text-gray-600">
                 <MapPin size={32} className="mx-auto mb-2" />
                 <p className="text-sm">
-                  {lang === 'uz' ? 'Amir Temur ko\'chasi 107B' : 'ул. Амира Темура 107Б'}
+                  {lang === 'uz' ? "Usta Shirin ko'chasi 111D" : 'ул. Уста Ширин 111D'}
                 </p>
                 <a
-                  href="https://maps.google.com/?q=Tashkent+Amir+Temur+107B"
+                  href="https://maps.google.com/?q=Tashkent+Usta+Shirin+111D"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-xs text-gold hover:underline mt-1 inline-block"

@@ -1,6 +1,8 @@
 import { BadgeCheck, Building2, CreditCard, Package, ShieldCheck, Truck } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { useEffect } from 'react'
 import { useLocale } from '../contexts/LocaleContext'
+import { setSeo } from '../lib/seo'
 
 const DELIVERY_OPTIONS = [
   {
@@ -65,6 +67,14 @@ const PAYMENT_OPTIONS = [
 
 export default function DeliveryPage() {
   const { lang, t } = useLocale()
+
+  useEffect(() => {
+    setSeo({
+      title: lang === 'uz' ? "Yetkazib berish va to'lov — SR Lux" : 'Доставка и оплата — SR Lux',
+      description: lang === 'uz' ? "SR Lux isitish tizimlarini Toshkent va O'zbekiston bo'ylab yetkazib berish va to'lov shartlari." : 'Условия доставки и оплаты систем отопления SR Lux по Ташкенту и Узбекистану.',
+      path: '/delivery',
+    })
+  }, [lang])
 
   return (
     <div className="min-h-screen bg-anthracite-900">
@@ -175,8 +185,8 @@ export default function DeliveryPage() {
           </p>
           <p className="text-gray-300 text-sm leading-7">
             {lang === 'uz'
-              ? 'Kafolat bo\'yicha murojaat uchun bizning xizmat markazimizga murojaat qiling: +998 71 123 45 67.'
-              : 'По вопросам гарантийного обслуживания обращайтесь в наш сервисный центр: +998 71 123 45 67.'}
+              ? 'Kafolat bo\'yicha murojaat uchun bizning xizmat markazimizga murojaat qiling: +998 95 185 47 97.'
+              : 'По вопросам гарантийного обслуживания обращайтесь в наш сервисный центр: +998 95 185 47 97.'}
           </p>
         </div>
 

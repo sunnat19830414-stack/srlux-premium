@@ -1,21 +1,23 @@
 import { Award, Clock, MapPin, Phone, Shield, Star, Thermometer, Zap } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { useEffect } from 'react'
 import { useLocale } from '../contexts/LocaleContext'
+import { setSeo } from '../lib/seo'
 
 const FEATURES = [
   {
     icon: Award,
-    titleRu: 'Официальный дистрибьютор',
-    titleUz: 'Rasmiy distribyutor',
-    textRu: 'Эксклюзивный представитель ведущих европейских брендов систем отопления в Узбекистане.',
-    textUz: "O'zbekistonda yetakchi Yevropa isitish tizimlari brendlarining eksklyuziv vakili.",
+    titleRu: 'Собственный бренд SR Lux',
+    titleUz: 'Mustaqil SR Lux brendi',
+    textRu: 'Каждая модель рассчитана по европейскому стандарту EN442 и доступна в индивидуальной покраске RAL — любой цвет палитры под заказ.',
+    textUz: "Har bir model Yevropa EN442 standarti bo'yicha hisoblangan va RAL palitrasidan istalgan rangda individual bo'yash bilan taqdim etiladi.",
   },
   {
     icon: Shield,
-    titleRu: 'Гарантия качества',
-    titleUz: 'Sifat kafolati',
-    textRu: 'Вся продукция сертифицирована и имеет официальную заводскую гарантию от 3 до 10 лет.',
-    textUz: 'Barcha mahsulotlar sertifikatlangan va 3 yildan 10 yilgacha rasmiy zavod kafolatiga ega.',
+    titleRu: 'Инженерный контроль качества',
+    titleUz: 'Muhandislik sifat nazorati',
+    textRu: 'Точная тепловая мощность, вес и размеры каждой модели указаны в карточке товара — не общие цифры "от производителя", а реальный расчёт.',
+    textUz: "Har bir modelning aniq issiqlik quvvati, og'irligi va o'lchamlari mahsulot kartasida ko'rsatilgan — umumiy raqamlar emas, balki aniq hisob-kitob.",
   },
   {
     icon: Thermometer,
@@ -34,14 +36,22 @@ const FEATURES = [
 ]
 
 const STATS = [
-  { value: '12+', labelRu: 'лет на рынке', labelUz: 'yil bozorda' },
-  { value: '5 000+', labelRu: 'объектов сдано', labelUz: "ob'ekt topshirildi" },
   { value: '30+', labelRu: 'видов оборудования', labelUz: 'uskuna turi' },
   { value: '100%', labelRu: 'оригинальная продукция', labelUz: 'original mahsulot' },
+  { value: 'EN442', labelRu: 'европейский стандарт мощности', labelUz: 'Yevropa quvvat standarti' },
+  { value: '200+', labelRu: 'цветов RAL под заказ', labelUz: 'RAL rangi buyurtma bilan' },
 ]
 
 export default function AboutPage() {
   const { lang, t } = useLocale()
+
+  useEffect(() => {
+    setSeo({
+      title: lang === 'uz' ? 'Kompaniya haqida — SR Lux' : 'О компании — SR Lux',
+      description: lang === 'uz' ? "SR Lux — O'zbekistonda isitish va iqlim-nazorat tizimlarining rasmiy distribyutori: dizaynerlik radiatorlari, sochiq isitgichlari, Wi-Fi termostatlar." : 'SR Lux — официальный дистрибьютор систем отопления и климат-контроля в Узбекистане: дизайнерские радиаторы, полотенцесушители, Wi-Fi термостаты.',
+      path: '/about',
+    })
+  }, [lang])
 
   return (
     <div className="min-h-screen bg-anthracite-900">
@@ -60,8 +70,8 @@ export default function AboutPage() {
           </h1>
           <p className="text-gray-400 text-lg max-w-2xl mx-auto">
             {lang === 'uz'
-              ? 'O\'zbekistonda isitish va iqlim-nazorat tizimlarining rasmiy distribyutori. 2012 yildan beri mijozlarga xizmat ko\'rsatib kelmoqdamiz.'
-              : 'Официальный дистрибьютор систем отопления и климат-контроля в Узбекистане. Обслуживаем клиентов с 2012 года.'}
+              ? "O'zbekistonda isitish va iqlim-nazorat tizimlarining rasmiy distribyutori."
+              : 'Официальный дистрибьютор систем отопления и климат-контроля в Узбекистане.'}
           </p>
         </div>
       </section>
@@ -120,13 +130,13 @@ export default function AboutPage() {
           </div>
           <p className="text-gray-300 text-base leading-8 mb-6">
             {lang === 'uz'
-              ? 'SR Lux - O\'zbekistondagi har bir uyda va har bir binoda qulay, energiya tejamkor va ishonchli isitish tizimini yaratishga intiladi. Biz faqat sertifikatlangan Yevropa ishlab chiqaruvchilarining mahsulotlarini taqdim etamiz va har bir buyurtmani individual yondashuv bilan bajaramiz.'
-              : 'SR Lux стремится создать комфортную, энергоэффективную и надёжную систему отопления в каждом доме и каждом здании Узбекистана. Мы предлагаем только сертифицированную продукцию европейских производителей и выполняем каждый заказ с индивидуальным подходом.'}
+              ? "SR Lux - O'zbekistondagi har bir uyda va har bir binoda qulay, energiya tejamkor va ishonchli isitish tizimini yaratishga intiladi. Katalogdagi har bir model Yevropa EN442 standarti bo'yicha hisoblangan, rangni esa RAL palitrasidan istalgancha individual tanlash mumkin."
+              : 'SR Lux стремится создать комфортную, энергоэффективную и надёжную систему отопления в каждом доме и каждом здании Узбекистана. Каждая модель в каталоге рассчитана по европейскому стандарту EN442, а цвет можно подобрать индивидуально — вплоть до любого оттенка палитры RAL.'}
           </p>
           <p className="text-gray-300 text-base leading-8">
             {lang === 'uz'
-              ? 'Kompaniyamiz 2012 yilda tashkil etilgan va bugungi kunda mamlakatning yirik shaharlari va viloyatlarida 5 000 dan ortiq ob\'ektni xizmat ko\'rsatib kelmoqda. Bizning xodimlarimiz muntazam ravishda Yevropa ishlab chiqaruvchi zavodlarida treningdan o\'tadi.'
-              : 'Компания основана в 2012 году и сегодня обслуживает более 5 000 объектов в крупных городах и регионах страны. Наши сотрудники регулярно проходят обучение на заводах европейских производителей.'}
+              ? "Barcha mahsulotlar Toshkentdagi omborimizda qabul qilinadi va tekshiriladi — SR Lux brendi ostida katalogdagi har bir mahsulot uchun javobgarmiz."
+              : 'Все товары проходят приёмку и контроль на нашем складе в Ташкенте перед отправкой клиенту — под брендом SR Lux мы отвечаем за каждую позицию в каталоге.'}
           </p>
         </div>
       </section>
