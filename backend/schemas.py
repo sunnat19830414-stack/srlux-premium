@@ -16,6 +16,8 @@ class CategoryOut(BaseModel):
     name_ru: str
     name_uz: str
     icon: str
+    sort_order: int
+    parent_id: Optional[int] = None
 
 
 # ── Product Variant ────────────────────────────────────────────────────────────
@@ -63,35 +65,61 @@ class ModelVariantOut(BaseModel):
     sku: str
     slug: str
     name_ru: str
+    name_uz: Optional[str] = None
     color: Optional[str]
     sections: Optional[int]
     height_mm: Optional[int]
     columns_count: Optional[int]
+    connection_type: Optional[str] = None
+    category_id: Optional[int] = None
+    power_w_dt50: Optional[int] = None
+    power_w_dt64_5: Optional[int] = None
+    power_w_fcu45: Optional[int] = None
+    power_w_fcu60: Optional[int] = None
+    power_w_electric: Optional[int] = None
     price_uzs: Decimal
     stock: int
     image_url: Optional[str]
+    images: List[str] = []
+    description_ru: Optional[str] = None
+    description_uz: Optional[str] = None
+    weight: Optional[float] = None
 
 
 class ModelCardOut(BaseModel):
     code: str
     name_ru: str
+    name_uz: Optional[str] = None
     category_name: Optional[str]
+    category_name_uz: Optional[str] = None
+    category_id: Optional[int]
+    category_ids: List[int] = []
     image_url: Optional[str]
+    category_images: Dict[str, str] = {}
     colors: List[str]
     price_from: Decimal
     price_to: Decimal
     total_stock: int
 
 
+class RelatedModelsOut(BaseModel):
+    similar: List[ModelCardOut] = []
+    complementary: List[ModelCardOut] = []
+
+
 class ModelDetailOut(BaseModel):
     code: str
     name_ru: str
+    name_uz: Optional[str] = None
     description_ru: Optional[str]
+    description_uz: Optional[str] = None
     category_name: Optional[str]
+    category_name_uz: Optional[str] = None
     color_images: Dict[str, Optional[str]]
     colors: List[str]
     sections_available: List[int]
     height_mm_available: List[int]
+    connection_types_available: List[str] = []
     variants: List[ModelVariantOut]
 
 
@@ -107,6 +135,7 @@ class CategoryBulkItem(BaseModel):
     name_ru: str
     name_uz: Optional[str] = None
     icon: Optional[str] = None
+    parent_dolibarr_id: Optional[int] = None
 
 
 class BulkCategoriesIn(BaseModel):
@@ -127,9 +156,13 @@ class ProductBulkItem(BaseModel):
     description_ru: Optional[str] = None
     description_uz: Optional[str] = None
     price_uzs: Decimal
+    price_usd: Optional[float] = None
     stock: int = 0
     weight: Optional[float] = None
+    width_mm: Optional[int] = None
+    depth_mm: Optional[int] = None
     image_url: Optional[str] = None
+    images: List[str] = []
     is_active: bool = True
     category_dolibarr_id: Optional[int] = None
     category_name_ru: Optional[str] = None
@@ -152,6 +185,7 @@ class OrderItemIn(BaseModel):
     product_id: int = Field(..., gt=0)
     variant_id: Optional[int] = Field(None, gt=0)
     quantity: int = Field(1, gt=0, le=1000)
+    custom_ral_note: Optional[str] = Field(None, max_length=300)
 
 
 _PHONE_RE = re.compile(r"^\+?[\d\s\-()]{5,30}$")
@@ -162,6 +196,8 @@ class OrderIn(BaseModel):
     customer_phone: str = Field(..., min_length=5, max_length=30)
     customer_address: Optional[str] = Field(None, max_length=500)
     items: List[OrderItemIn] = Field(..., min_length=1, max_length=100)
+    project_file_url: Optional[str] = Field(None, max_length=500)
+    project_file_name: Optional[str] = Field(None, max_length=255)
 
     @field_validator("customer_phone")
     @classmethod
@@ -177,6 +213,7 @@ class OrderItemOut(BaseModel):
     product_name_snapshot: str
     quantity: int
     unit_price_snapshot: Decimal
+    custom_ral_note: Optional[str] = None
 
 
 class OrderOut(BaseModel):
@@ -188,6 +225,8 @@ class OrderOut(BaseModel):
     customer_phone: str
     total_uzs: Decimal
     status: str
+    project_file_url: Optional[str] = None
+    project_file_name: Optional[str] = None
     items: List[OrderItemOut] = []
 
 
@@ -335,3 +374,64 @@ class SyncStatusOut(BaseModel):
     last_run: Optional[str]
     last_result: Optional[str]
     last_success: bool
+
+
+# ── Catalog PDF generator (admin-only) ─────────────────────────────────────────
+
+class CatalogPhotoOut(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    id: int
+    model_code: str
+    image_url: str
+    sort_order: int
+
+
+class CatalogVariantOut(BaseModel):
+    height_mm: Optional[int] = None
+    sections: Optional[int] = None
+    prices: List[float] = []
+    weights: List[float] = []
+    powers: List[int] = []
+    widths: List[int] = []
+    depths: List[int] = []
+    colors: List[str] = []
+    category_id: Optional[int] = None
+
+
+class CatalogModelOut(BaseModel):
+    code: str
+    name_ru: str
+    description_ru: Optional[str] = None
+    category_name: Optional[str]
+    category_id: Optional[int]
+    category_ids: List[int] = []
+    colors: List[str] = []
+    sections_list: List[int] = []
+    height_mm_list: List[int] = []
+    image_url: Optional[str]
+    price_usd_from: Optional[Decimal] = None
+    price_usd_to: Optional[Decimal] = None
+    photos: List[CatalogPhotoOut] = []
+    variants: List[CatalogVariantOut] = []
+
+
+class CatalogModelListOut(BaseModel):
+    total: int
+    models: List[CatalogModelOut]
+
+
+class CatalogSettingsOut(BaseModel):
+    company_name: str
+    catalog_title: str
+    logo_url: Optional[str] = None
+
+
+class CatalogSettingsUpdateIn(BaseModel):
+    company_name: Optional[str] = Field(None, min_length=1, max_length=200)
+    catalog_title: Optional[str] = Field(None, min_length=1, max_length=200)
+
+
+class CatalogGenerateIn(BaseModel):
+    category_id: Optional[int] = None
+    cards_per_row: int = Field(2, ge=1, le=4)
