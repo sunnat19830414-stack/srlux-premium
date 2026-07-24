@@ -1,9 +1,11 @@
 import { ArrowLeft, ImageOff, Package, ShoppingCart } from 'lucide-react'
+import SmartImage from '../components/SmartImage'
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { Product, Variant } from '../api/client'
 import { fetchProduct } from '../api/client'
 import { useLocale } from '../contexts/LocaleContext'
+import { absoluteUrl, setSeo } from '../lib/seo'
 
 function fmt(n: number) {
   return n.toLocaleString('ru-RU')
@@ -31,14 +33,33 @@ export default function ProductPage({ onAddToCart }: Props) {
     fetchProduct(slug)
       .then((r) => {
         setProduct(r.data)
-        // Update meta tags for SEO
         const name = lang === 'uz' ? (r.data.name_uz || r.data.name_ru) : r.data.name_ru
-        document.title = `${name} — SR Lux`
-        const metaDesc = document.querySelector('meta[name="description"]')
-        if (metaDesc) {
-          const desc = lang === 'uz' ? (r.data.description_uz || r.data.description_ru) : r.data.description_ru
-          metaDesc.setAttribute('content', desc || name)
-        }
+        const descRaw = (lang === 'uz' ? (r.data.description_uz || r.data.description_ru) : r.data.description_ru) || ''
+        const descClean = descRaw.replace(/\s+/g, ' ').trim()
+        const desc = descClean
+          ? (descClean.length > 160 ? `${descClean.slice(0, 157)}...` : descClean)
+          : `${name} — купить в Ташкенте. SR Lux, официальный дистрибьютор систем отопления в Узбекистане.`
+        setSeo({
+          title: `${name} — SR Lux`,
+          description: desc,
+          path: `/product/${slug}`,
+          image: absoluteUrl(r.data.image_url),
+          type: 'product',
+          jsonLd: {
+            '@context': 'https://schema.org',
+            '@type': 'Product',
+            name,
+            description: desc,
+            image: absoluteUrl(r.data.image_url),
+            brand: { '@type': 'Brand', name: 'SR Lux' },
+            offers: {
+              '@type': 'Offer',
+              priceCurrency: 'UZS',
+              price: r.data.price_uzs,
+              availability: r.data.stock > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+            },
+          },
+        })
       })
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false))
@@ -94,11 +115,11 @@ export default function ProductPage({ onAddToCart }: Props) {
           {/* Image */}
           <div className="bg-anthracite-800 rounded-2xl overflow-hidden border border-gold-700/15 aspect-square flex items-center justify-center">
             {product.image_url && !imgError ? (
-              <img
+              <SmartImage
                 src={product.image_url}
                 alt={name}
                 className="w-full h-full object-contain"
-                onError={() => setImgError(true)}
+                onLoadError={() => setImgError(true)}
               />
             ) : (
               <div className="flex flex-col items-center justify-center gap-3 text-gray-600">

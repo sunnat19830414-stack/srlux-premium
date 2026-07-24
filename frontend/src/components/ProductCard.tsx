@@ -124,7 +124,7 @@ export default function ProductCard({ product, onAddToCart }: Props) {
         {/* Price + button */}
         <div className="mt-auto pt-3 border-t border-gold-700/10 flex items-end justify-between gap-2">
           <div>
-            <p className="text-[10px] text-gray-500 mb-0.5">от</p>
+            <p className="text-[10px] text-gray-500 mb-0.5">{t.from}</p>
             <p className="text-xl font-bold bg-gold-gradient bg-clip-text text-transparent">
               {fmt(effectivePrice)}
             </p>
