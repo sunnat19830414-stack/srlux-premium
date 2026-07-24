@@ -77,7 +77,7 @@ export function organizationJsonLd() {
     description: 'Официальный дистрибьютор систем отопления и климат-контроля в Узбекистане.',
     address: {
       '@type': 'PostalAddress',
-      streetAddress: 'ул. Амира Темура 107Б',
+      streetAddress: 'ул. Уста Ширин 111D',
       addressLocality: 'Ташкент',
       addressCountry: 'UZ',
     },
