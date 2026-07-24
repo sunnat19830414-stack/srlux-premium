@@ -10,8 +10,8 @@ import os
 import sys
 from decimal import Decimal
 from pathlib import Path
-from urllib.parse import quote
 
+import re
 import requests
 
 logging.basicConfig(
@@ -93,7 +93,15 @@ def fetch_categories() -> dict:
 def fetch_product_categories(products: list) -> dict:
     """
     Строит маппинг {product_dolibarr_id: category_dolibarr_id}.
-    Для каждого товара запрашивает GET /categories?type=product&object_id={pid}.
+    Для каждого товара запрашивает GET /categories/object/product/{pid} — это
+    единственный эндпоинт, который реально фильтрует по товару (старый вариант
+    GET /categories?type=product&object_id={pid} игнорирует object_id и всегда
+    возвращает одну и ту же первую категорию из общего списка).
+
+    Dolibarr обычно возвращает категорию-родителя (например, "Радиаторы") и
+    категорию-потомка (например, "Column 2") одновременно — берём самую
+    конкретную (ту, что не является fk_parent ни для одной другой категории
+    в этом же списке).
     """
     product_to_cat: dict = {}
     total = len(products)
@@ -103,15 +111,17 @@ def fetch_product_categories(products: list) -> dict:
             continue
         try:
             resp = requests.get(
-                f"{DOLIBARR_URL}/categories",
+                f"{DOLIBARR_URL}/categories/object/product/{pid}",
                 headers=DOLIBARR_HEADERS,
-                params={"type": "product", "object_id": pid, "limit": 1},
                 timeout=10,
             )
             if resp.status_code == 200:
                 cats = resp.json()
                 if isinstance(cats, list) and cats:
-                    cid = int(cats[0]["id"]) if cats[0].get("id") else 0
+                    parent_ids = {int(c["fk_parent"]) for c in cats if c.get("fk_parent")}
+                    leaves = [c for c in cats if int(c.get("id", 0)) not in parent_ids]
+                    chosen = leaves[-1] if leaves else cats[-1]
+                    cid = int(chosen["id"]) if chosen.get("id") else 0
                     if cid:
                         product_to_cat[pid] = cid
         except Exception as e:
@@ -146,12 +156,28 @@ def sync_categories_to_backend(categories_map: dict) -> None:
     cats = []
     for dolibarr_id, cat_data in categories_map.items():
         name_ru = str(cat_data.get("label") or "Категория").strip()
+        fk_parent_raw = cat_data.get("fk_parent")
+        parent_dolibarr_id = None
+        if fk_parent_raw and str(fk_parent_raw) not in ("0", "", "null", "None"):
+            try:
+                parent_dolibarr_id = int(fk_parent_raw)
+            except (ValueError, TypeError):
+                pass
+            # id=24 ("Точка продажа (POS) продукты") is Dolibarr's catch-all
+            # root — every real top-level category (Радиаторы, Термостаты...)
+            # is filed under it, but it isn't a merchandising category itself,
+            # so treat it as if it had no parent to keep those as true
+            # top-level nodes on the site instead of nesting everything
+            # under a "POS products" wrapper.
+            if parent_dolibarr_id == 24:
+                parent_dolibarr_id = None
         if name_ru:
             cats.append({
                 "dolibarr_id": dolibarr_id,
                 "name_ru": name_ru,
                 "name_uz": None,
                 "icon": None,
+                "parent_dolibarr_id": parent_dolibarr_id,
             })
 
     try:
@@ -247,6 +273,9 @@ def build_parent_map(raw_products: list) -> dict:
     return parent_map
 
 
+NO_GROUP_MODEL_CARDS: set[str] = {"BZ", "FANCOIL"}
+
+
 def build_model_map(raw_products: list) -> tuple[dict, set]:
     """
     Выявляет «карточки моделей» по формату label: "REF/alias — описание".
@@ -282,6 +311,15 @@ def build_model_map(raw_products: list) -> tuple[dict, set]:
         canonical = ref  # ref карточки — каноническое имя модели
         card_refs.append(ref)
 
+        # Некоторые карточки — это просто референс-фото от поставщика
+        # (например "BZ" с алиасом "BZV3"), а не настоящая группа моделей.
+        # Оставляем их скрытыми (is_active=False через model_card_ids), но
+        # НЕ регистрируем алиасы, иначе BZ-*/BZV3-* товары с разной высотой
+        # схлопываются в одну страницу по (color, sections) — sections не
+        # различает высоту, color у них не заполнен.
+        if ref.upper() in NO_GROUP_MODEL_CARDS:
+            continue
+
         for alias in aliases:
             if alias:
                 alias_map[alias.upper()] = canonical
@@ -298,9 +336,34 @@ def find_parent_model(ref: str, sorted_prefixes: list, alias_map: dict) -> str |
     ref_upper = ref.upper()
     for prefix in sorted_prefixes:
         if ref_upper == prefix:
-            continue  # это сама карточка модели
+            if alias_map[prefix] == prefix:
+                continue  # это сама карточка модели (алиас указывает сам на себя)
+            return alias_map[prefix]  # точное совпадение с алиасом другой модели
         if ref_upper.startswith(prefix):
             return alias_map[prefix]
+    return None
+
+
+
+# ── Push-фитинги Andes (S/L/T-62PPR) ────────────────────────────────────────
+# У этих SKU нет карточки модели в Dolibarr, а простое сопоставление по
+# префиксу (find_parent_model выше) не может их различить: "S16x16-62PPR"
+# (обычная муфта) и "S16x20R-62PPR" (муфта с подогревом) оба начинаются с
+# "S16x". Поэтому группируем эту линейку отдельными regex-паттернами.
+PUSHFIT_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"^S\d+X\d+R-62PPR$"), "PF-S-HEATED"),      # S16x20R-62PPR
+    (re.compile(r"^S\d+X\d+-62PPR$"),  "PF-S-COUPLING"),    # S16x16-62PPR
+    (re.compile(r"^L\d+X\d+-62PPR$"),  "PF-L-ELBOW"),       # L16x16-62PPR
+    (re.compile(r"^T\d+X\d+X\d+-62PPR$"), "PF-T-TEE"),     # T16x16x16-62PPR
+]
+
+
+def find_pushfit_parent_model(ref: str) -> str | None:
+    """Возвращает parent_model для push-фитингов Andes, или None."""
+    ref_upper = ref.upper()
+    for pattern, code in PUSHFIT_PATTERNS:
+        if pattern.match(ref_upper):
+            return code
     return None
 
 
@@ -319,55 +382,124 @@ def _get_photos(p: dict) -> str | None:
     return None
 
 
-DOLIBARR_BASE_URL = DOLIBARR_URL.replace("/api/index.php", "").rstrip("/")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 UPLOADS_DIR = Path("/app/uploads")
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Кэш: product_id -> local_url (чтобы не скачивать дважды за один запуск)
-_photo_cache: dict[int, str | None] = {}
+# Кэш: product_id -> [local_url, ...] (чтобы не скачивать дважды за один запуск)
+_gallery_cache: dict[int, list[str]] = {}
 
 
-def _download_dolibarr_photo(product_id: int, viewimage_url: str, filename_hint: str) -> str | None:
-    """Скачивает фото из Dolibarr с API-ключом и сохраняет локально."""
+def _download_dolibarr_photo(product_id: int, index: int, file_path: str, filename_hint: str) -> str | None:
+    """Скачивает фото из Dolibarr через REST API (documents/download) и сохраняет локально.
+
+    viewimage.php требует сессионный логин и не принимает DOLAPIKEY, поэтому
+    используем официальный REST-эндпоинт /documents/download, который
+    отдаёт содержимое файла в base64 при авторизации через DOLAPIKEY.
+    """
+    import base64
+    import hashlib
+
     ext = Path(filename_hint).suffix.lower().lstrip(".")
     if ext not in ("jpg", "jpeg", "png", "webp", "gif"):
         ext = "jpg"
     if ext == "jpeg":
         ext = "jpg"
-    local_name = f"dol_{product_id}.{ext}"
-    local_path = UPLOADS_DIR / local_name
     try:
-        resp = requests.get(viewimage_url, headers=DOLIBARR_HEADERS, timeout=30)
-        ct = resp.headers.get("Content-Type", "")
-        if resp.status_code == 200 and "image" in ct and len(resp.content) > 500:
-            local_path.write_bytes(resp.content)
-            return f"/static/uploads/{local_name}"
-        elif resp.status_code != 200 or "image" not in ct:
-            logger.debug(f"Фото {product_id}: статус={resp.status_code} ct={ct} url={viewimage_url}")
+        resp = requests.get(
+            f"{DOLIBARR_URL}/documents/download",
+            headers=DOLIBARR_HEADERS,
+            params={"modulepart": "produit", "original_file": file_path},
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            content = data.get("content")
+            if content and data.get("encoding") == "base64":
+                raw = base64.b64decode(content)
+                if len(raw) > 500:
+                    # Имя файла включает хеш содержимого, чтобы при замене
+                    # фото в Dolibarr получался НОВЫЙ URL — иначе nginx отдаёт
+                    # /static/ с Cache-Control: immutable на 30 дней, и
+                    # обновлённое фото никогда не доходит до браузера
+                    # (тот же dol_{id}.png продолжает считаться закэшированным).
+                    content_hash = hashlib.md5(raw).hexdigest()[:10]
+                    local_name = (
+                        f"dol_{product_id}_{content_hash}.{ext}"
+                        if index == 0
+                        else f"dol_{product_id}_{index}_{content_hash}.{ext}"
+                    )
+                    local_path = UPLOADS_DIR / local_name
+                    local_path.write_bytes(raw)
+                    # WebP-копия рядом с оригиналом — фронтенд отдаёт её через
+                    # <picture>/<source> браузерам, которые её поддерживают
+                    # (~90% экономии веса против jpg/png), с оригиналом как
+                    # fallback. Не блокирует синхронизацию при сбое конвертации.
+                    try:
+                        from PIL import Image
+                        img = Image.open(local_path)
+                        img = img.convert("RGBA" if img.mode in ("RGBA", "P") else "RGB")
+                        img.save(local_path.with_suffix(".webp"), "WEBP", quality=82, method=6)
+                    except Exception as e:
+                        logger.debug(f"WebP-конвертация {product_id}: {e}")
+                    # Подчищаем старые файлы этого товара/индекса с ДРУГИМ
+                    # хешем содержимого, чтобы не копить бесконечно устаревшие
+                    # копии после замены фото в Dolibarr. Сравниваем именно
+                    # хеш (капчер-группа), а не имя файла целиком и не
+                    # расширение — иначе любой альтернативный формат с тем же
+                    # хешем (сгенерированный .webp рядом с оригиналом, либо
+                    # вручную оптимизированный .jpg/.webp той же фотографии)
+                    # считается "старым файлом другого хеша" и удаляется на
+                    # первом же цикле синхронизации, хотя это тот же самый
+                    # снимок в другом контейнере (обнаружено 2026-07-14:
+                    # так дважды пропадали фото на сайте — сперва у карточек
+                    # товаров в "Хиты продаж", затем у плитки категории
+                    # "Стальной панельный", где вручную сжатый .jpg с тем же
+                    # хешем в имени принимался за устаревший .png-оригинал).
+                    if index == 0:
+                        stale_re = re.compile(rf"^dol_{product_id}_([0-9a-f]{{10}})\.\w+$")
+                    else:
+                        stale_re = re.compile(rf"^dol_{product_id}_{index}_([0-9a-f]{{10}})\.\w+$")
+                    for old_file in UPLOADS_DIR.glob(f"dol_{product_id}_*"):
+                        m = stale_re.match(old_file.name)
+                        if m and m.group(1) != content_hash:
+                            try:
+                                old_file.unlink()
+                            except OSError:
+                                pass
+                    legacy_name = f"dol_{product_id}.{ext}" if index == 0 else f"dol_{product_id}_{index}.{ext}"
+                    legacy_path = UPLOADS_DIR / legacy_name
+                    if legacy_path.exists():
+                        try:
+                            legacy_path.unlink()
+                        except OSError:
+                            pass
+                    return f"/static/uploads/{local_name}"
+            logger.debug(f"Фото {product_id}: пустой content, ответ={data.get('filename')}")
+        else:
+            logger.debug(f"Фото {product_id}: статус={resp.status_code} file={file_path}")
     except Exception as e:
         logger.debug(f"Скачивание фото {product_id}: {e}")
     return None
 
 
-def fetch_document_photo(product_id: int, product_ref: str) -> str | None:
+def fetch_all_document_photos(product_id: int, product_ref: str) -> list[str]:
     """
-    Скачивает первое изображение из Dolibarr Documents, сохраняет локально,
-    возвращает /static/uploads/... URL.
+    Скачивает ВСЕ изображения, прикреплённые к товару в Dolibarr Documents
+    (используется как галерея на сайте), сохраняет локально, возвращает
+    список /static/uploads/... URL в порядке, в котором их вернул Dolibarr.
     """
-    if product_id in _photo_cache:
-        return _photo_cache[product_id]
+    # Note: deliberately no filesystem-based "already downloaded" shortcut here
+    # (unlike the old single-photo fetch_document_photo) — a stale single
+    # "dol_{id}.jpg" left over from a previous run would falsely look like a
+    # complete gallery and stop us from ever fetching the rest. The in-memory
+    # _gallery_cache below is enough to avoid duplicate work within one run;
+    # _download_dolibarr_photo overwrites the same filename idempotently.
+    if product_id in _gallery_cache:
+        return _gallery_cache[product_id]
 
-    # Если файл уже скачан в этот запуск — используем его
-    for ext in ("jpg", "png", "webp", "gif"):
-        cached = UPLOADS_DIR / f"dol_{product_id}.{ext}"
-        if cached.exists() and cached.stat().st_size > 500:
-            url = f"/static/uploads/dol_{product_id}.{ext}"
-            _photo_cache[product_id] = url
-            return url
-
-    url = None
+    urls: list[str] = []
     try:
         resp = requests.get(
             f"{DOLIBARR_URL}/documents",
@@ -381,26 +513,32 @@ def fetch_document_photo(product_id: int, product_ref: str) -> str | None:
                 for doc in docs:
                     # Dolibarr may return name=null; check relativename for extension
                     rel_name = str(doc.get("relativename") or doc.get("name") or "").lower()
-                    if any(rel_name.endswith(ext) for ext in IMAGE_EXTENSIONS):
-                        relative = doc.get("relativename") or doc.get("name")
-                        level1 = doc.get("level1name") or ""
-                        if relative:
-                            # Build proper path: level1name/relativename
-                            if level1 and not relative.startswith(level1):
-                                file_path = f"{level1}/{relative}"
-                            else:
-                                file_path = relative
-                            viewimage_url = (
-                                f"{DOLIBARR_BASE_URL}/viewimage.php"
-                                f"?modulepart=product&file={quote(file_path)}&cache=1"
-                            )
-                            url = _download_dolibarr_photo(product_id, viewimage_url, rel_name)
-                            break
+                    if not any(rel_name.endswith(ext) for ext in IMAGE_EXTENSIONS):
+                        continue
+                    relative = doc.get("relativename") or doc.get("name")
+                    level1 = doc.get("level1name") or ""
+                    fullname = str(doc.get("fullname") or "")
+                    marker = "/documents/produit/"
+                    idx2 = fullname.find(marker)
+                    if idx2 != -1:
+                        # Most reliable: derive path from the absolute fullname,
+                        # since relativename sometimes already embeds the folder
+                        # name as a filename prefix (no actual "/" in it) and the
+                        # level1name+relativename heuristic then drops the folder.
+                        file_path = fullname[idx2 + len(marker):]
+                    elif relative and level1 and not relative.startswith(level1):
+                        file_path = f"{level1}/{relative}"
+                    else:
+                        file_path = relative
+                    if file_path:
+                        url = _download_dolibarr_photo(product_id, len(urls), file_path, rel_name)
+                        if url:
+                            urls.append(url)
     except Exception as e:
         logger.debug(f"Документы для товара {product_id}: {e}")
 
-    _photo_cache[product_id] = url
-    return url
+    _gallery_cache[product_id] = urls
+    return urls
 
 
 def build_payload(
@@ -439,6 +577,15 @@ def build_payload(
                 skipped += 1
                 continue
 
+            # API-параметр status=1 в fetch_all_products() не фильтрует
+            # результат (Dolibarr его игнорирует на этом инстансе) — товары
+            # с status=0 ("не для продажи") всё равно приходят в ответе,
+            # поэтому фильтруем их здесь явно, иначе deactivated в Dolibarr
+            # товары продолжают попадать на сайт при каждой синхронизации.
+            if int(p.get("status") or 0) == 0:
+                skipped += 1
+                continue
+
             # Цена: Dolibarr хранит товары в USD — всегда конвертируем в UZS
             raw_price = extract_price(p)
             price_uzs = convert_price(raw_price, DOLIBARR_DEFAULT_CURRENCY, usd_rate)
@@ -451,6 +598,53 @@ def build_payload(
             stock = int(float(p.get("stock_reel") or 0))
             weight_raw = p.get("weight")
             weight = float(weight_raw) if weight_raw not in (None, "", "0") else None
+
+            # Dolibarr's own "length"/"width"/"height" fields (metres) map to
+            # the radiator's real physical height/width/depth, confirmed
+            # 2026-07-15 by cross-checking every radiator with an H×W×D
+            # string embedded in its Dolibarr label (e.g. GZ2's width=0.47
+            # matches "1800x470x70"'s "470"). That default mapping holds for
+            # ~90% of SKUs, but a few product lines need per-SKU handling
+            # (verified against label/SKU-embedded numbers, not guessed) —
+            # height_mm is untouched either way, sourced elsewhere in the
+            # pipeline:
+            #  - JDC22: struct length/width/height rotate inconsistently
+            #    even within this one line (confirmed against every SKU —
+            #    JDC22-1200-400W's struct fields don't follow the same
+            #    rotation as JDC22-400-1000 or JDC22-1800-400B), but the SKU
+            #    itself always encodes "JDC22-{height}-{width}" literally
+            #    (checked against all 21 active JDC22 SKUs), so real width
+            #    is parsed from the SKU rather than from Dolibarr's fields;
+            #    real depth is Dolibarr's "width" field, a reliably constant
+            #    ~100mm profile across every SKU.
+            #  - short (300mm) GZ3/"G3T-300" panels: real width sits in
+            #    Dolibarr's "length" field, real depth in "width" (e.g.
+            #    G3T-300-26W's label "300x1174x100" has length=1.174
+            #    matching the 1174mm width).
+            #  - NCR03: real width sits in Dolibarr's "height" field, real
+            #    depth in "width" (width is a constant 168mm profile, height
+            #    grows 425→1175mm with section count, i.e. is the width).
+            def _mm(raw):
+                return round(float(raw) * 1000) if raw not in (None, "", "0") else None
+
+            length_mm = _mm(p.get("length"))
+            raw_width_mm = _mm(p.get("width"))
+            raw_height_mm = _mm(p.get("height"))
+
+            jdc22_match = re.match(r"^JDC22-\d+-(\d+)", sku) if sku.startswith("JDC22") else None
+
+            if jdc22_match:
+                width_mm = int(jdc22_match.group(1))
+                depth_mm = raw_width_mm
+            elif sku.startswith("G3T-300"):
+                width_mm = length_mm
+                depth_mm = raw_width_mm
+            elif sku.startswith("NCR03"):
+                width_mm = raw_height_mm
+                depth_mm = raw_width_mm
+            else:
+                width_mm = raw_width_mm
+                depth_mm = raw_height_mm
 
             description_ru = str(p.get("description") or "").strip() or None
 
@@ -465,16 +659,20 @@ def build_payload(
 
             parent = parent_map.get(fk_parent) if fk_parent else None
 
-            # Фото: сначала своё поле, потом документы Dolibarr, потом с родителя
-            image_url = _get_photos(p)
-            if not image_url:
-                image_url = fetch_document_photo(dolibarr_id, sku)
+            # Фото: сначала своё поле, потом документы Dolibarr (все — как галерея),
+            # потом с родителя (только обложка, без галереи — фото на карточке
+            # модели относятся к разным цветам/вариантам, а не к этому товару).
+            own_gallery = fetch_all_document_photos(dolibarr_id, sku)
+            image_url = _get_photos(p) or (own_gallery[0] if own_gallery else None)
+            images = own_gallery if own_gallery else ([image_url] if image_url else [])
             if not image_url and parent:
                 parent_pid = int(parent.get("id", 0))
                 parent_ref = str(parent.get("ref") or "")
-                image_url = _get_photos(parent) or fetch_document_photo(parent_pid, parent_ref)
+                parent_gallery = fetch_all_document_photos(parent_pid, parent_ref)
+                image_url = _get_photos(parent) or (parent_gallery[0] if parent_gallery else None)
                 if image_url:
                     inherited_photo += 1
+                    images = [image_url]
 
             # Описание: сначала своё, fallback — с родителя
             if not description_ru and parent:
@@ -507,7 +705,7 @@ def build_payload(
             if is_model_card:
                 parent_model = None
             else:
-                parent_model = find_parent_model(sku, sorted_prefixes, alias_map)
+                parent_model = find_parent_model(sku, sorted_prefixes, alias_map) or find_pushfit_parent_model(sku)
 
             payload.append({
                 "dolibarr_id": dolibarr_id,
@@ -517,9 +715,16 @@ def build_payload(
                 "description_ru": description_ru,
                 "description_uz": None,
                 "price_uzs": float(price_uzs),
+                # Raw pre-conversion Dolibarr value — never shown on the
+                # public site, only used by the admin-only PDF catalog
+                # generator (retail price in USD, per its own request).
+                "price_usd": float(raw_price) if raw_price and raw_price > 0 else None,
                 "stock": stock,
                 "weight": weight,
+                "width_mm": width_mm,
+                "depth_mm": depth_mm,
                 "image_url": image_url,
+                "images": images,
                 "is_active": not is_model_card,
                 "category_dolibarr_id": cat_dolibarr_id,
                 "category_name_ru": cat_name_ru,
@@ -591,9 +796,13 @@ def main():
     # 4. Определяем модельные группы из структуры Dolibarr (label = "REF/alias — desc")
     alias_map, model_card_ids = build_model_map(raw_products)
 
+    # 4b. Реальная привязка товар→категория из Dolibarr (у большинства товаров
+    # категория не приходит прямо в /products, поэтому запрашиваем отдельно)
+    product_to_cat = fetch_product_categories(raw_products)
+
     # 5. Импортируем товары
     payload = build_payload(
-        raw_products, categories_map, {}, usd_rate,
+        raw_products, categories_map, product_to_cat, usd_rate,
         parent_map=parent_map,
         alias_map=alias_map,
         model_card_ids=model_card_ids,
