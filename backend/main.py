@@ -8,9 +8,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from database import init_db
-from routers import admin, categories, orders, products
+from database import get_db, init_db
+from routers import admin, categories, catalog, orders, products
 from routers import models as models_router
+from fastapi import Depends
+from fastapi.responses import Response
+from sqlalchemy.ext.asyncio import AsyncSession
+import crud
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,15 +37,18 @@ app = FastAPI(
     redoc_url="/api/redoc",
 )
 
-# Request body size limit: 10 MB
+# Request body size limit: 10 MB (25 MB on the project-file upload route,
+# since PDF/DWG project drawings from designers routinely exceed 10 MB)
 MAX_BODY_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_UPLOAD_BODY_SIZE = 25 * 1024 * 1024  # 25 MB
 
 
 @app.middleware("http")
 async def limit_body_size(request: Request, call_next):
     if request.method in ("POST", "PUT", "PATCH"):
+        limit = MAX_UPLOAD_BODY_SIZE if request.url.path == "/api/orders/upload-file" else MAX_BODY_SIZE
         content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > MAX_BODY_SIZE:
+        if content_length and int(content_length) > limit:
             return JSONResponse(status_code=413, content={"detail": "Request body too large"})
     return await call_next(request)
 
@@ -63,11 +70,32 @@ app.include_router(categories.router)
 app.include_router(orders.router)
 app.include_router(admin.router)
 app.include_router(models_router.router)
+app.include_router(catalog.router)
 
 
 @app.get("/health", tags=["system"])
 async def health():
     return {"status": "ok"}
+
+
+STATIC_SITEMAP_PATHS = ["", "about", "contacts", "delivery"]
+
+
+@app.get("/sitemap.xml", tags=["system"])
+async def sitemap(db: AsyncSession = Depends(get_db)):
+    base = "https://srlux.uz"
+    urls = [f"{base}/{p}" if p else f"{base}/" for p in STATIC_SITEMAP_PATHS]
+
+    rows = await crud.get_model_cards(db)
+    urls += [f"{base}/model/{r['code']}" for r in rows]
+
+    body = ['<?xml version="1.0" encoding="UTF-8"?>']
+    body.append('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">')
+    for u in urls:
+        body.append(f"<url><loc>{u}</loc></url>")
+    body.append("</urlset>")
+
+    return Response(content="\n".join(body), media_type="application/xml")
 
 
 if __name__ == "__main__":
