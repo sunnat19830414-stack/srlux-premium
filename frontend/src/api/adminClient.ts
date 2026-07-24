@@ -135,6 +135,40 @@ export interface SyncStatus {
   last_success: boolean
 }
 
+export interface CatalogPhoto {
+  id: number
+  model_code: string
+  image_url: string
+  sort_order: number
+}
+
+export interface CatalogModel {
+  code: string
+  name_ru: string
+  description_ru: string | null
+  category_name: string | null
+  category_id: number | null
+  category_ids: number[]
+  colors: string[]
+  sections_list: number[]
+  height_mm_list: number[]
+  image_url: string | null
+  price_usd_from: number | null
+  price_usd_to: number | null
+  photos: CatalogPhoto[]
+}
+
+export interface CatalogModelList {
+  total: number
+  models: CatalogModel[]
+}
+
+export interface CatalogSettings {
+  company_name: string
+  catalog_title: string
+  logo_url: string | null
+}
+
 // ── API calls ─────────────────────────────────────────────────────────────────
 
 export const adminCheckAuth = () => adminApi.get<AdminStats>('/api/admin/stats')
@@ -186,3 +220,45 @@ export const adminGetSyncStatus = () =>
 
 export const adminTriggerSync = () =>
   adminApi.post<SyncStatus>('/api/admin/sync/trigger')
+
+// ── Catalog PDF generator ────────────────────────────────────────────────────
+
+export const adminListCatalogModels = (categoryId?: number | null) =>
+  adminApi.get<CatalogModelList>('/api/admin/catalog/models', {
+    params: categoryId != null ? { category_id: categoryId } : undefined,
+  })
+
+export const adminUploadCatalogPhoto = (modelCode: string, file: File) => {
+  const form = new FormData()
+  form.append('file', file)
+  return adminApi.post<CatalogPhoto>(`/api/admin/catalog/photos/${encodeURIComponent(modelCode)}`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+export const adminSetCatalogPhotoPrimary = (photoId: number) =>
+  adminApi.patch<CatalogPhoto>(`/api/admin/catalog/photos/${photoId}/primary`)
+
+export const adminDeleteCatalogPhoto = (photoId: number) =>
+  adminApi.delete(`/api/admin/catalog/photos/${photoId}`)
+
+export const adminGetCatalogSettings = () =>
+  adminApi.get<CatalogSettings>('/api/admin/catalog/settings')
+
+export const adminUpdateCatalogSettings = (data: { company_name?: string; catalog_title?: string }) =>
+  adminApi.patch<CatalogSettings>('/api/admin/catalog/settings', data)
+
+export const adminUploadCatalogLogo = (file: File) => {
+  const form = new FormData()
+  form.append('file', file)
+  return adminApi.post<CatalogSettings>('/api/admin/catalog/logo', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+export const adminGenerateCatalog = (categoryId: number | null, cardsPerRow: number = 2) =>
+  adminApi.post(
+    '/api/admin/catalog/generate',
+    { category_id: categoryId, cards_per_row: cardsPerRow },
+    { responseType: 'blob' },
+  )
