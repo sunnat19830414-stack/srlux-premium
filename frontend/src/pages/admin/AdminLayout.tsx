@@ -1,4 +1,4 @@
-import { BarChart3, FolderOpen, LogOut, Package, RefreshCw, ShoppingBag } from 'lucide-react'
+import { BarChart3, FileText, FolderOpen, LogOut, Package, RefreshCw, ShoppingBag } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { adminGetStats, clearAdminKey, getAdminKey } from '../../api/adminClient'
@@ -8,6 +8,7 @@ const NAV = [
   { to: '/admin/orders',     icon: ShoppingBag, label: 'Заказы' },
   { to: '/admin/products',   icon: Package,     label: 'Товары' },
   { to: '/admin/categories', icon: FolderOpen,  label: 'Категории' },
+  { to: '/admin/catalog',    icon: FileText,    label: 'Каталог PDF' },
   { to: '/admin/sync',       icon: RefreshCw,   label: 'Синхронизация' },
   { to: '/admin/stats',      icon: BarChart3,   label: 'Дашборд' },
 ]
