@@ -1,12 +1,15 @@
 import { useState } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import type { Product, Variant } from './api/client'
+import FloatingWhatsApp from './components/FloatingWhatsApp'
+import ScrollToTop from './components/ScrollToTop'
 import Footer from './components/Footer'
 import Header from './components/Header'
 import { LocaleProvider } from './contexts/LocaleContext'
 import AboutPage from './pages/AboutPage'
 import CartPage from './pages/CartPage'
 import CatalogPage from './pages/CatalogPage'
+import HomePage from './pages/HomePage'
 import ContactsPage from './pages/ContactsPage'
 import DeliveryPage from './pages/DeliveryPage'
 import ModelPage from './pages/ModelPage'
@@ -17,12 +20,17 @@ import AdminCategories from './pages/admin/AdminCategories'
 import AdminOrderDetail from './pages/admin/AdminOrderDetail'
 import AdminOrders from './pages/admin/AdminOrders'
 import AdminProducts from './pages/admin/AdminProducts'
+import AdminCatalog from './pages/admin/AdminCatalog'
 import AdminStats from './pages/admin/AdminStats'
 import AdminSync from './pages/admin/AdminSync'
 
 interface CartItem extends Product {
   variant: Variant | null
   cartQty: number
+  // Set when the customer requests a made-to-order RAL colour instead of a
+  // stocked variant — price is confirmed by a manager afterward, not
+  // computed automatically (see engineering-audit item on RAL selection).
+  customRal?: string
 }
 
 function loadCart(): CartItem[] {
@@ -43,11 +51,16 @@ export default function App() {
     try { localStorage.setItem('srlux_cart', JSON.stringify(items)) } catch {}
   }
 
-  const addToCart = (product: Product, variant: Variant | null, qty: number) => {
+  const addToCart = (product: Product, variant: Variant | null, qty: number, customRal?: string) => {
     setCartItems((prev) => {
-      const idx = prev.findIndex(
-        (i) => i.id === product.id && (i.variant?.id ?? null) === (variant?.id ?? null),
-      )
+      // Each custom-RAL request is its own line (never merged with another
+      // custom-colour request or a stocked variant), since the note text
+      // differs and quantities shouldn't silently combine across requests.
+      const idx = customRal
+        ? -1
+        : prev.findIndex(
+            (i) => i.id === product.id && (i.variant?.id ?? null) === (variant?.id ?? null) && !i.customRal,
+          )
       if (idx >= 0) {
         const next = prev.map((item, i) =>
           i === idx ? { ...item, cartQty: item.cartQty + qty } : item,
@@ -55,7 +68,7 @@ export default function App() {
         saveCart(next)
         return next
       }
-      const next = [...prev, { ...product, variant, cartQty: qty }]
+      const next = [...prev, { ...product, variant, cartQty: qty, customRal }]
       saveCart(next)
       return next
     })
@@ -64,6 +77,7 @@ export default function App() {
   return (
     <LocaleProvider>
       <BrowserRouter>
+        <ScrollToTop />
         <Routes>
           {/* Admin panel — separate layout, no header/footer */}
           <Route path="/admin/login" element={<AdminLogin />} />
@@ -73,6 +87,7 @@ export default function App() {
             <Route path="orders/:id" element={<AdminOrderDetail />} />
             <Route path="products" element={<AdminProducts />} />
             <Route path="categories" element={<AdminCategories />} />
+            <Route path="catalog" element={<AdminCatalog />} />
             <Route path="sync" element={<AdminSync />} />
             <Route path="stats" element={<AdminStats />} />
           </Route>
@@ -85,7 +100,8 @@ export default function App() {
                 <Header cartCount={cartCount} />
                 <main className="flex-1">
                   <Routes>
-                    <Route path="/" element={<CatalogPage />} />
+                    <Route path="/" element={<HomePage cartCount={cartCount} />} />
+                    <Route path="/catalog" element={<CatalogPage />} />
                     <Route path="/model/:code" element={<ModelPage onAddToCart={addToCart} />} />
                     <Route path="/product/:slug" element={<ProductPage onAddToCart={addToCart} />} />
                     <Route
@@ -103,6 +119,7 @@ export default function App() {
                   </Routes>
                 </main>
                 <Footer />
+                <FloatingWhatsApp />
               </div>
             }
           />
