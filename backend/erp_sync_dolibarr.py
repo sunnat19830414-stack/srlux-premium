@@ -5,6 +5,9 @@ erp_sync_dolibarr.py — Синхронизация товаров из Dolibarr
   */30 * * * * /usr/bin/python3 /app/erp_sync_dolibarr.py >> /var/log/srlux_sync.log 2>&1
 """
 
+import fcntl
+import html
+import json
 import logging
 import os
 import sys
@@ -13,6 +16,16 @@ from pathlib import Path
 
 import re
 import requests
+
+# Cron fires every 30 min regardless of how long the previous run took —
+# a slow run (Dolibarr pagination + per-product category lookups routinely
+# takes several minutes) can still be executing when the next one starts.
+# Two concurrent runs raced in testing (2026-07-25) and one run's SEO-
+# snapshot "delete anything not written by me" cleanup (see
+# generate_model_snapshots) wiped out the *other* run's freshly-written
+# files, leaving model-snapshots/ empty. A non-blocking lock makes the
+# second invocation exit immediately instead of racing.
+LOCK_PATH = "/tmp/erp_sync.lock"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,6 +36,10 @@ logger = logging.getLogger("erp_sync")
 DOLIBARR_URL = os.getenv("DOLIBARR_API_URL", "https://bollente.uz/api/index.php/").rstrip("/")
 DOLIBARR_KEY = os.getenv("DOLIBARR_API_KEY", "")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://api:8000")
+# Internal address of the frontend container — used only to fetch the
+# current built index.html as a template for static SEO snapshots (below),
+# never for anything user-facing.
+WEB_URL = os.getenv("WEB_URL", "http://web:3000")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 
 # Dolibarr prices are in USD — always convert to UZS
@@ -766,6 +783,273 @@ def send_to_backend(payload: list) -> None:
         sys.exit(1)
 
 
+# ── Static SEO snapshots (per-page title/description/OG/JSON-LD) ──────────────
+#
+# The site is a client-rendered Vite SPA (ReactDOM.createRoot, not
+# hydrateRoot — see frontend/src/main.tsx) that sets per-page <title>/meta/
+# JSON-LD from useEffect via frontend/src/lib/seo.ts. That means the raw HTML
+# a crawler sees before JS runs is the same static shell on every page —
+# confirmed via `curl -s https://srlux.uz/model/<code>` returning identical
+# <title>/<meta description> for every product (2026-07-25 audit).
+#
+# Fix: after every sync, render each page's actual <head> tags into a static
+# HTML file, reusing the live built index.html as the template so fonts/GTM/
+# CSP-related tags never drift from what's actually deployed. nginx serves
+# these ahead of the SPA fallback (see nginx.conf `/model/` and the four
+# exact-match static-page locations). Because mounting uses createRoot (not
+# hydrateRoot), there is no reconciliation between this static markup and
+# what React renders — React just wipes and re-renders `#root` from scratch,
+# so no hydration-mismatch risk. The meta/link/script elements below use the
+# exact same selectors setSeo() upserts in frontend/src/lib/seo.ts (name=
+# "description", property="og:*", id="seo-jsonld"), so once JS mounts it
+# updates those same elements in place instead of duplicating them.
+SITE_URL = "https://srlux.uz"
+SNAPSHOT_DIR = Path(os.getenv("SNAPSHOT_DIR", "/app/uploads/model-snapshots"))
+STATIC_SNAPSHOT_DIR = Path(os.getenv("STATIC_SNAPSHOT_DIR", "/app/uploads/static-snapshots"))
+
+# Same fallback used by frontend/src/lib/seo.ts's absoluteUrl()
+def _abs_url(path_or_url):
+    if not path_or_url:
+        return None
+    return path_or_url if path_or_url.startswith("http") else f"{SITE_URL}{path_or_url}"
+
+
+# Mirrors ModelPage.tsx's seoDesc computation exactly
+def _truncate_description(raw, fallback):
+    cleaned = re.sub(r"\s+", " ", (raw or "")).strip()
+    if not cleaned:
+        return fallback
+    return f"{cleaned[:157]}..." if len(cleaned) > 160 else cleaned
+
+
+def _fetch_template():
+    try:
+        resp = requests.get(WEB_URL + "/", timeout=10)
+        resp.raise_for_status()
+        return resp.text
+    except Exception as e:
+        logger.warning(f"Не удалось получить шаблон index.html с {WEB_URL}: {e}")
+        return None
+
+
+def _patch_head_html(template: str, *, title: str, description: str, path: str,
+                      image: str | None, jsonld: dict | None) -> str:
+    url = _abs_url(path)
+    title_esc = html.escape(title)
+    desc_esc = html.escape(description)
+
+    out = re.sub(r"<title>.*?</title>", lambda _m: f"<title>{title_esc}</title>", template, count=1, flags=re.S)
+    out = re.sub(
+        r'<meta name="description" content="[^"]*"\s*/?>',
+        lambda _m: f'<meta name="description" content="{desc_esc}" />',
+        out, count=1,
+    )
+    out = re.sub(
+        r'<link rel="canonical" href="[^"]*"\s*/?>',
+        lambda _m: f'<link rel="canonical" href="{html.escape(url)}" />',
+        out, count=1,
+    )
+    og_replacements = {
+        "og:title": title_esc,
+        "og:description": desc_esc,
+        "og:type": "product" if path.startswith("/model/") else "website",
+        "og:url": html.escape(url),
+    }
+    for prop, value in og_replacements.items():
+        out = re.sub(
+            rf'<meta property="{re.escape(prop)}" content="[^"]*"\s*/?>',
+            lambda _m, v=value: f'<meta property="{prop}" content="{v}" />',
+            out, count=1,
+        )
+    abs_image = _abs_url(image)
+    if abs_image:
+        out = re.sub(
+            r'<meta property="og:image" content="[^"]*"\s*/?>',
+            lambda _m: f'<meta property="og:image" content="{html.escape(abs_image)}" />',
+            out, count=1,
+        )
+    twitter_card = "summary_large_image" if abs_image else "summary"
+    out = re.sub(
+        r'<meta name="twitter:card" content="[^"]*"\s*/?>',
+        lambda _m: f'<meta name="twitter:card" content="{twitter_card}" />',
+        out, count=1,
+    )
+
+    if jsonld:
+        script_tag = f'<script type="application/ld+json" id="seo-jsonld">{json.dumps(jsonld, ensure_ascii=False)}</script>\n  </head>'
+        out = re.sub(r"</head>", lambda _m: script_tag, out, count=1)
+
+    return out
+
+
+def generate_model_snapshots():
+    """Static-SEO snapshot for every /model/<code> page — see module docstring above."""
+    template = _fetch_template()
+    if template is None:
+        logger.warning("Пропускаю генерацию SEO-снапшотов моделей (нет шаблона).")
+        return
+
+    try:
+        resp = requests.get(f"{BACKEND_URL}/api/models", timeout=15)
+        resp.raise_for_status()
+        codes = [m["code"] for m in resp.json().get("models", [])]
+    except Exception as e:
+        logger.error(f"Не удалось получить список моделей для SEO-снапшотов: {e}")
+        return
+
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    written = set()
+
+    for code in codes:
+        try:
+            r = requests.get(f"{BACKEND_URL}/api/models/{code}", timeout=15)
+            if r.status_code != 200:
+                continue
+            m = r.json()
+            variants = m.get("variants") or []
+            image = variants[0].get("image_url") if variants else None
+            seo_desc = _truncate_description(
+                m.get("description_ru"),
+                f"{m['name_ru']} — купить в Ташкенте. SR Lux, официальный дистрибьютор систем отопления в Узбекистане.",
+            )
+            # price_uzs is a Decimal field — pydantic v2 serializes it to a
+            # JSON *string* (to preserve precision), not a number, so it must
+            # be coerced before any numeric comparison (bit every single
+            # model with a bare `> 0` in testing: "'>' not supported between
+            # instances of 'str' and 'int'").
+            prices = [float(v["price_uzs"]) for v in variants if float(v.get("price_uzs") or 0) > 0]
+            in_stock = any((v.get("stock") or 0) > 0 for v in variants)
+
+            jsonld = {
+                "@context": "https://schema.org",
+                "@type": "Product",
+                "name": m["name_ru"],
+                "description": seo_desc,
+                "brand": {"@type": "Brand", "name": "SR Lux"},
+            }
+            abs_image = _abs_url(image)
+            if abs_image:
+                jsonld["image"] = abs_image
+            if prices:
+                jsonld["offers"] = {
+                    "@type": "AggregateOffer",
+                    "priceCurrency": "UZS",
+                    "lowPrice": min(prices),
+                    "highPrice": max(prices),
+                    "offerCount": len(variants),
+                    "availability": "https://schema.org/InStock" if in_stock else "https://schema.org/OutOfStock",
+                }
+
+            html_out = _patch_head_html(
+                template,
+                title=f"{m['name_ru']} — SR Lux",
+                description=seo_desc,
+                path=f"/model/{code}",
+                image=image,
+                jsonld=jsonld,
+            )
+            (SNAPSHOT_DIR / f"{code}.html").write_text(html_out, encoding="utf-8")
+            written.add(f"{code}.html")
+        except Exception as e:
+            logger.warning(f"SEO-снапшот для модели {code} не сгенерирован: {e}")
+
+    # Снапшоты для моделей, которые больше не существуют (переименованы/сняты
+    # с продажи) — иначе nginx продолжил бы отдавать устаревшую карточку
+    # вместо актуального 404/фолбэка на SPA. Guarded: only prune when we
+    # actually wrote a reasonable share of `codes` — if something upstream
+    # failed part-way (or a concurrent run raced this one despite the lock
+    # above), `written` being empty/tiny must never be read as "everything
+    # else is stale", or it wipes out good snapshots from a previous run.
+    stale = 0
+    if codes and len(written) >= max(1, len(codes) // 2):
+        for f in SNAPSHOT_DIR.glob("*.html"):
+            if f.name not in written:
+                f.unlink()
+                stale += 1
+    elif codes:
+        logger.warning(
+            f"Пропускаю очистку устаревших снапшотов: успешно сгенерировано только "
+            f"{len(written)} из {len(codes)} моделей."
+        )
+
+    logger.info(f"SEO-снапшоты моделей: {len(written)} сгенерировано, {stale} устаревших удалено.")
+
+
+def generate_static_snapshots():
+    """Static-SEO snapshot for the handful of static content pages."""
+    template = _fetch_template()
+    if template is None:
+        logger.warning("Пропускаю генерацию SEO-снапшотов статических страниц (нет шаблона).")
+        return
+
+    STATIC_SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+
+    pages = [
+        {
+            "file": "home.html",
+            "path": "/",
+            "title": "SR Lux — Премиальные системы отопления и климат-контроля",
+            "description": "Дизайнерские радиаторы, полотенцесушители и Wi-Fi термостаты SR Lux — премиальные решения для дома и объекта",
+            "image": "/public_assets/logo-horizontal.png",
+            "jsonld": {
+                "@context": "https://schema.org",
+                "@type": "Organization",
+                "name": "SR Lux",
+                "url": SITE_URL,
+                "logo": f"{SITE_URL}/public_assets/logo-horizontal.png",
+                "description": "Официальный дистрибьютор систем отопления и климат-контроля в Узбекистане.",
+                "address": {
+                    "@type": "PostalAddress",
+                    "streetAddress": "ул. Уста Ширин 111D",
+                    "addressLocality": "Ташкент",
+                    "addressCountry": "UZ",
+                },
+                "telephone": "+998951854797",
+            },
+        },
+        {
+            "file": "about.html",
+            "path": "/about",
+            "title": "О компании — SR Lux",
+            "description": "SR Lux — официальный дистрибьютор систем отопления и климат-контроля в Узбекистане: дизайнерские радиаторы, полотенцесушители, Wi-Fi термостаты.",
+            "image": None,
+            "jsonld": None,
+        },
+        {
+            "file": "contacts.html",
+            "path": "/contacts",
+            "title": "Контакты — SR Lux",
+            "description": "Свяжитесь с SR Lux: телефон, WhatsApp, адрес шоурума в Ташкенте, режим работы.",
+            "image": None,
+            "jsonld": None,
+        },
+        {
+            "file": "delivery.html",
+            "path": "/delivery",
+            "title": "Доставка и оплата — SR Lux",
+            "description": "Условия доставки и оплаты систем отопления SR Lux по Ташкенту и Узбекистану.",
+            "image": None,
+            "jsonld": None,
+        },
+    ]
+
+    for page in pages:
+        try:
+            html_out = _patch_head_html(
+                template,
+                title=page["title"],
+                description=page["description"],
+                path=page["path"],
+                image=page["image"],
+                jsonld=page["jsonld"],
+            )
+            (STATIC_SNAPSHOT_DIR / page["file"]).write_text(html_out, encoding="utf-8")
+        except Exception as e:
+            logger.warning(f"SEO-снапшот для {page['path']} не сгенерирован: {e}")
+
+    logger.info(f"SEO-снапшоты статических страниц: {len(pages)} сгенерировано.")
+
+
 def main():
     logger.info("=== Запуск синхронизации SR Lux ↔ Dolibarr ===")
     logger.info(f"Валюта Dolibarr: {DOLIBARR_DEFAULT_CURRENCY}")
@@ -809,8 +1093,26 @@ def main():
     )
     send_to_backend(payload)
 
+    # 6. Статические SEO-снапшоты (title/description/OG/JSON-LD per page) —
+    # не должно валить синк товаров, если недоступен фронтенд-контейнер и т.п.
+    try:
+        generate_model_snapshots()
+        generate_static_snapshots()
+    except Exception as e:
+        logger.error(f"Генерация SEO-снапшотов упала: {e}")
+
     logger.info("=== Синхронизация завершена ===")
 
 
 if __name__ == "__main__":
-    main()
+    lock_file = open(LOCK_PATH, "w")
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        logger.warning("Другой запуск синхронизации уже выполняется — пропускаю.")
+        sys.exit(0)
+    try:
+        main()
+    finally:
+        fcntl.flock(lock_file, fcntl.LOCK_UN)
+        lock_file.close()
