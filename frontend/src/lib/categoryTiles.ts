@@ -7,7 +7,14 @@ import type { Category, ModelCard } from '../api/client'
 // belong inside the catalog, not on the front door). Shared between
 // HomePage and CatalogPage so both surfaces agree on the same six tiles
 // and the same cover photo per tile.
-export const FEATURED_CATEGORY_IDS = [1, 16, 12, 20, 13, 15]
+//
+// 60 = «Трап» (id in *this* Postgres `categories` table, from
+// `SELECT id FROM categories WHERE dolibarr_id=51` after the entity=2 sync —
+// not the Dolibarr rowid itself, those are two different numbering spaces).
+// One tile for the whole root (not one per subcategory), per product
+// decision — same pattern as "Радиаторы" already being one tile covering
+// its Вертикальные/Горизонтальные sub-branches.
+export const FEATURED_CATEGORY_IDS = [1, 16, 12, 20, 13, 15, 60]
 
 // Auto-picking "whichever model happens to sit directly on this root
 // category" landed on an accessory (a radiator fan) for Запорная
