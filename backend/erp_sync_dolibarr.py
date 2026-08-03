@@ -42,6 +42,15 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://api:8000")
 WEB_URL = os.getenv("WEB_URL", "http://web:3000")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 
+# "Трап" — second business (sanitary floor drains), entity=2 in the same
+# Dolibarr install. The stock REST API is hardcoded to conf->entity=1 at
+# auth time (confirmed by direct curl — ?entity=2 is silently ignored), so
+# entity=2 data comes from a small dedicated export endpoint instead
+# (custom/entity2export/ on the Dolibarr box), not the shared /api/ path.
+# Both unset by default — sync_entity2() no-ops until configured.
+DOLIBARR_ENTITY2_URL = os.getenv("DOLIBARR_ENTITY2_URL", "").rstrip("/")
+DOLIBARR_ENTITY2_API_KEY = os.getenv("DOLIBARR_ENTITY2_API_KEY", "")
+
 # Dolibarr prices are in USD — always convert to UZS
 DOLIBARR_DEFAULT_CURRENCY = os.getenv("DOLIBARR_DEFAULT_CURRENCY", "USD")
 
@@ -783,6 +792,167 @@ def send_to_backend(payload: list) -> None:
         sys.exit(1)
 
 
+# ── "Трап" (entity=2) — independent second sync pass ───────────────────────────
+#
+# Runs after the entity=1 (radiators) sync has already fully committed, and
+# is wrapped in its own try/except in main() — a bug here must never be able
+# to take down the primary sync. Reuses the same downstream primitives as
+# entity=1 (sync_categories_to_backend, the /api/admin/products/bulk upsert)
+# rather than inventing a parallel path, per the plan this was built from.
+
+def fetch_entity2_data() -> dict | None:
+    """One GET to the entity=2 export endpoint on the Dolibarr box. Returns
+    None (not an exception) if unconfigured or unreachable, so callers can
+    just skip the pass — this must never be able to fail the whole sync."""
+    if not DOLIBARR_ENTITY2_URL or not DOLIBARR_ENTITY2_API_KEY:
+        return None
+    try:
+        resp = requests.get(
+            f"{DOLIBARR_ENTITY2_URL}/export.php",
+            headers={"X-API-KEY": DOLIBARR_ENTITY2_API_KEY},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if not data.get("ok"):
+            logger.error(f"«Трап»: export.php вернул ok=false: {data}")
+            return None
+        return data
+    except Exception as e:
+        logger.error(f"«Трап»: не удалось получить данные с {DOLIBARR_ENTITY2_URL}: {e}")
+        return None
+
+
+def _download_trap_photo(dolibarr_id: int, ref: str) -> str | None:
+    """Mirrors _download_dolibarr_photo's storage convention (content-hashed
+    filename, WebP sibling, stale-file cleanup) but pulls bytes from the
+    entity=2 photo.php endpoint instead of Dolibarr's document REST API —
+    same /app/uploads/ + /static/uploads/... URL convention either way, so
+    nothing downstream needs to know the source differs."""
+    import hashlib
+
+    try:
+        resp = requests.get(
+            f"{DOLIBARR_ENTITY2_URL}/photo.php",
+            headers={"X-API-KEY": DOLIBARR_ENTITY2_API_KEY},
+            params={"ref": ref},
+            timeout=30,
+        )
+        if resp.status_code != 200 or len(resp.content) < 500:
+            return None
+
+        content_type = resp.headers.get("Content-Type", "")
+        ext = "jpg"
+        if "png" in content_type:
+            ext = "png"
+        elif "webp" in content_type:
+            ext = "webp"
+
+        raw = resp.content
+        content_hash = hashlib.md5(raw).hexdigest()[:10]
+        local_name = f"dol_{dolibarr_id}_{content_hash}.{ext}"
+        local_path = UPLOADS_DIR / local_name
+        local_path.write_bytes(raw)
+
+        try:
+            from PIL import Image
+            img = Image.open(local_path)
+            img = img.convert("RGBA" if img.mode in ("RGBA", "P") else "RGB")
+            img.save(local_path.with_suffix(".webp"), "WEBP", quality=82, method=6)
+        except Exception as e:
+            logger.debug(f"«Трап»: WebP-конвертация {ref}: {e}")
+
+        stale_re = re.compile(rf"^dol_{dolibarr_id}_([0-9a-f]{{10}})\.\w+$")
+        for old_file in UPLOADS_DIR.glob(f"dol_{dolibarr_id}_*"):
+            m = stale_re.match(old_file.name)
+            if m and m.group(1) != content_hash:
+                try:
+                    old_file.unlink()
+                except OSError:
+                    pass
+
+        return f"/static/uploads/{local_name}"
+    except Exception as e:
+        logger.warning(f"«Трап»: фото {ref} (id={dolibarr_id}) не скачано: {e}")
+        return None
+
+
+def send_entity2_products(payload: list) -> None:
+    """Same endpoint/shape as send_to_backend(), but deliberately does NOT
+    sys.exit() on failure — a bug in the new entity=2 path must not be able
+    to kill a process that already successfully synced entity=1 radiators
+    (the SEO-snapshot generation step still runs after this one)."""
+    if not payload:
+        logger.info("«Трап»: нечего отправлять.")
+        return
+    try:
+        resp = requests.post(
+            f"{BACKEND_URL}/api/admin/products/bulk",
+            json={"products": payload},
+            headers={"X-Api-Key": ADMIN_API_KEY, "Content-Type": "application/json"},
+            timeout=60,
+        )
+        if resp.status_code == 200:
+            result = resp.json()
+            logger.info(f"✅ «Трап» синхронизирован: upserted={result['upserted']}, skipped={result['skipped']}")
+        else:
+            logger.error(f"«Трап»: ошибка ответа бэкенда: {resp.status_code} — {resp.text[:300]}")
+    except Exception as e:
+        logger.error(f"«Трап»: не удалось отправить данные на бэкенд: {e}")
+
+
+def sync_entity2(usd_rate: Decimal) -> None:
+    data = fetch_entity2_data()
+    if data is None:
+        logger.info("«Трап»: entity2-эндпоинт не настроен или недоступен — пропускаю проход.")
+        return
+
+    categories = data.get("categories") or []
+    products = data.get("products") or []
+    logger.info(f"«Трап»: получено с Dolibarr — категорий={len(categories)}, товаров={len(products)}")
+
+    categories_map = {
+        c["id"]: {"label": c["label"], "fk_parent": c.get("parent_id")}
+        for c in categories
+    }
+    sync_categories_to_backend(categories_map)
+
+    # NB: unlike entity=1, there is no existing "hide when out of stock"
+    # behaviour to reuse — checked (grep for `stock` in this file): entity=1
+    # products with stock=0 stay is_active=True and just show an out-of-
+    # stock badge on the site. This stock<=0 -> is_active=False rule is new,
+    # entity=2-only logic per the product decision to keep the (currently
+    # all-zero-stock) "Трап" catalog hidden until real stock lands.
+    payload = []
+    hidden = 0
+    for p in products:
+        stock = int(p.get("stock") or 0)
+        is_active = stock > 0
+        if not is_active:
+            hidden += 1
+
+        price_uzs = convert_price(p.get("price"), p.get("currency") or "USD", usd_rate)
+        if price_uzs <= 0:
+            logger.warning(f"«Трап»: {p.get('ref')} — нулевая/некорректная цена, будет пропущен upsert'ом")
+
+        image_url = _download_trap_photo(p["id"], p["ref"]) if p.get("has_photo") else None
+
+        payload.append({
+            "dolibarr_id": p["id"],
+            "sku": p["ref"],
+            "name_ru": p.get("label") or p["ref"],
+            "price_uzs": float(price_uzs),
+            "stock": stock,
+            "image_url": image_url,
+            "is_active": is_active,
+            "category_dolibarr_id": p.get("category_id"),
+            "parent_model": None,
+        })
+
+    logger.info(f"«Трап»: скрыто по нулевому остатку (is_active=False) — {hidden} из {len(products)}")
+    send_entity2_products(payload)
+
+
 # ── Static SEO snapshots (per-page title/description/OG/JSON-LD) ──────────────
 #
 # The site is a client-rendered Vite SPA (ReactDOM.createRoot, not
@@ -1092,6 +1262,15 @@ def main():
         model_card_ids=model_card_ids,
     )
     send_to_backend(payload)
+
+    # 5b. «Трап» (entity=2) — независимый второй проход. Отдельный try/except
+    # (в дополнение к тем, что уже внутри sync_entity2/send_entity2_products)
+    # гарантирует: что бы тут ни случилось, уже закоммиченная синхронизация
+    # радиаторов (entity=1) выше — и SEO-снапшоты ниже — не пострадают.
+    try:
+        sync_entity2(usd_rate)
+    except Exception as e:
+        logger.error(f"«Трап» (entity=2): синхронизация упала: {e}")
 
     # 6. Статические SEO-снапшоты (title/description/OG/JSON-LD per page) —
     # не должно валить синк товаров, если недоступен фронтенд-контейнер и т.п.
