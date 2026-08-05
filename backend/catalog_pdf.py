@@ -87,6 +87,20 @@ def _load_font_b64(name: str) -> str:
         return base64.b64encode(f.read()).decode("ascii")
 
 
+# Dolibarr's own description text is generated per-SKU and always opens with
+# a line naming that one variant's own dimensions — e.g. "Стальной трубчатый
+# радиатор Column 2 (1500×560)" — even though the model card sits above a
+# table already listing every real height/width combination the model comes
+# in. Left in place, the printed description reads as if it only describes
+# that one arbitrary variant instead of the whole model. Strip that opening
+# clause (mirrors _clean_model_name's stripping of the same per-SKU
+# dimension blob from the title) so what's left is the actual general
+# description paragraph that follows it.
+_LEADING_DIMENSION_BLURB_RE = re.compile(
+    r"^Стальной трубчатый радиатор[^(]*\([^)]*\)\s*", re.IGNORECASE,
+)
+
+
 def clean_description(raw: str | None) -> str:
     if not raw:
         return ""
@@ -96,6 +110,7 @@ def clean_description(raw: str | None) -> str:
     text = html.unescape(text)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\s*\n\s*", " ", text).strip()
+    text = _LEADING_DIMENSION_BLURB_RE.sub("", text).strip()
     return text
 
 
@@ -180,6 +195,26 @@ def _fmt_range(values: list, fmt: str = "{:g}") -> str:
     return f"{fmt.format(vals[0])}–{fmt.format(vals[-1])}"
 
 
+# Same (height_mm, sections, category_id) row is sometimes fed by two
+# independently-priced Dolibarr SKUs — e.g. a legacy code and its later
+# replacement — that are the same real retail price and differ only by a
+# few cents of currency-conversion rounding (confirmed: colour never
+# actually changes price on this data, per crud.get_catalog_models). Below
+# this threshold that's rounding noise, not a real second price the printed
+# catalog needs to explain — show the lower one plainly instead of a
+# "341.18–341.19"-style range with no way for a reader to know why.
+_PRICE_NOISE_THRESHOLD_USD = 1.0
+
+
+def _fmt_price_range(values: list) -> str:
+    vals = sorted(set(values))
+    if not vals:
+        return "—"
+    if len(vals) == 1 or (vals[-1] - vals[0]) < _PRICE_NOISE_THRESHOLD_USD:
+        return f"{vals[0]:,.2f}"
+    return f"{vals[0]:,.2f}–{vals[-1]:,.2f}"
+
+
 def _variants_table_html(variants: list) -> str:
     has_height = any(v.get("height_mm") for v in variants)
     has_width = any(v.get("widths") for v in variants)
@@ -222,7 +257,7 @@ def _variants_table_html(variants: list) -> str:
         if has_colors:
             names = [html.escape(COLOR_NAMES.get(c, c)) for c in (v.get("colors") or [])]
             cells.append(f"<td>{', '.join(names)}</td>" if names else "<td>—</td>")
-        cells.append(f'<td class="price">{_fmt_range(v.get("prices") or [], "{:,.2f}")}</td>')
+        cells.append(f'<td class="price">{_fmt_price_range(v.get("prices") or [])}</td>')
         rows.append(f"<tr>{''.join(cells)}</tr>")
     thead = "".join(f'<th class="price">{h}</th>' if h == "USD" else f"<th>{h}</th>" for h in headers)
     return (
@@ -450,6 +485,13 @@ def _build_card_html(m: dict, orientation_map: dict) -> str:
             variant_lines.append(html.escape(sizes_line))
     variants_html = ('<div class="variants">' + "<br>".join(variant_lines) + "</div>") if variant_lines else ""
 
+    # Same reasoning as the variant_lines suppression above: the per-size
+    # table's own USD column already gives every real price, so the single
+    # "от X" summary line at the card's bottom is pure repetition once a
+    # table is shown (and can even look like a second, unexplained price)
+    # — only render it when there's no table to make the point instead.
+    price_row_html = "" if variants_table_html else f'<div class="price-row">{fmt_price(m)}</div>'
+
     return f"""
     <div class="card">
       {photo_html}
@@ -459,7 +501,7 @@ def _build_card_html(m: dict, orientation_map: dict) -> str:
         {variants_table_html}
         {desc_html}
         {variants_html}
-        <div class="price-row">{fmt_price(m)}</div>
+        {price_row_html}
       </div>
     </div>
     """

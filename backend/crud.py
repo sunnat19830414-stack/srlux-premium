@@ -275,8 +275,21 @@ async def get_catalog_models(db: AsyncSession, category_scope: Optional[list[int
         # painted), which would otherwise show a misleading "10–25" range for
         # what customers actually buy. Price is unaffected either way, so raw
         # SKUs still count toward it.
+        # Some model families (confirmed on GZ2/GZ3 "Column" radiators) carry
+        # duplicate SKUs for the same real product — a legacy code (e.g.
+        # "GZ2T-12_1500W") sitting alongside its later, properly-structured
+        # replacement ("GZ2-12_1500_White") — where the legacy SKU never got
+        # height_mm/sections filled in at all. Grouped by (height_mm,
+        # sections, category_id), a legacy SKU's own (None, None, cid) key
+        # produces a separate row that's entirely dashes in the printed
+        # table and explains nothing. height_mm is the one column every
+        # variants-table row needs to be meaningful, so skip rows missing
+        # it — the real, fully-structured duplicate already covers the same
+        # size/price/colour elsewhere in the table.
         groups: dict[tuple, dict] = {}
         for v in m.pop("variants_raw", None) or []:
+            if v.get("height_mm") is None:
+                continue
             key = (v.get("height_mm"), v.get("sections"), v.get("category_id"))
             g = groups.get(key)
             if g is None:
@@ -566,7 +579,14 @@ async def bulk_upsert_products(db: AsyncSession, items: list) -> dict:
             # wipe out a translation that's already been filled in.
             if item.name_uz:
                 existing.name_uz = item.name_uz
-            existing.description_ru = item.description_ru
+            # Same reasoning applies to description_ru: entity=1 products
+            # without a Dolibarr description send None here, and entity=2
+            # ("Трап") products only started sending a real value once
+            # export.php was extended to include it — a still-blank source
+            # description must not wipe out a description filled in by hand
+            # or already synced from a previous pass.
+            if item.description_ru:
+                existing.description_ru = item.description_ru
             if item.description_uz:
                 existing.description_uz = item.description_uz
             existing.price_uzs = item.price_uzs
