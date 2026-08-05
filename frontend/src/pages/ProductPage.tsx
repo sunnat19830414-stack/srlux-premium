@@ -151,7 +151,7 @@ export default function ProductPage({ onAddToCart }: Props) {
               inStock ? 'bg-green-900/40 text-green-400' : 'bg-red-900/40 text-red-400'
             }`}>
               <span className={`w-2 h-2 rounded-full ${inStock ? 'bg-green-400' : 'bg-red-400'}`} />
-              {inStock ? `${t.inStock} (${product.stock} ${t.qty})` : t.outOfStock}
+              {inStock ? t.inStock : t.outOfStock}
             </div>
 
             {/* Price */}

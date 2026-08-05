@@ -59,15 +59,13 @@ export default function ModelCard({ model, catIds }: { model: ModelCard; catIds?
           <ImageOff size={36} />
         </div>
 
-        {/* Stock badge — hidden on mobile: precise counts ('130 шт') read as
-            discount-store b2b clutter on a premium storefront; kept on
-            desktop where there is room for it to sit unobtrusively. */}
-        <div className="hidden sm:block absolute top-2 right-2">
+        {/* Stock badge */}
+        <div className="absolute top-2 right-2">
           <span className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-semibold backdrop-blur-sm ${
             inStock ? 'bg-green-900/80 text-green-400' : 'bg-red-900/80 text-red-400'
           }`}>
             <span className={`w-1.5 h-1.5 rounded-full ${inStock ? 'bg-green-400' : 'bg-red-400'}`} />
-            {inStock ? `${model.total_stock} ${t.qty}` : t.outOfStockShort}
+            {inStock ? t.inStock : t.outOfStockShort}
           </span>
         </div>
 
