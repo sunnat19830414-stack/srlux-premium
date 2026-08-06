@@ -1214,7 +1214,7 @@ def generate_static_snapshots():
             "file": "returns.html",
             "path": "/returns",
             "title": "Возврат товара — SR Lux",
-            "description": "Условия возврата товаров SR Lux: 14 дней, Узбекистан и Казахстан.",
+            "description": "Возврат товара с браком — бесплатно для покупателя. Условия для Узбекистана и Казахстана.",
             "image": None,
             "jsonld": None,
         },

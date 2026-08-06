@@ -1,4 +1,4 @@
-import { Package, PhoneCall, RotateCcw, ShieldCheck, Truck } from 'lucide-react'
+import { BadgeCheck, Package, PhoneCall, RotateCcw, ShieldCheck, Truck } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useEffect } from 'react'
 import { useLocale } from '../contexts/LocaleContext'
@@ -11,8 +11,8 @@ export default function ReturnsPage() {
     setSeo({
       title: lang === 'uz' ? 'Mahsulotni qaytarish — SR Lux' : 'Возврат товара — SR Lux',
       description: lang === 'uz'
-        ? "SR Lux mahsulotlarini qaytarish shartlari: 14 kun, O'zbekiston va Qozog'iston."
-        : 'Условия возврата товаров SR Lux: 14 дней, Узбекистан и Казахстан.',
+        ? "SR Lux mahsulotlarini qaytarish shartlari: nuqsonli mahsulotlar uchun bepul, O'zbekiston va Qozog'iston."
+        : 'Условия возврата товаров SR Lux: бесплатно при браке, Узбекистан и Казахстан.',
       path: '/returns',
     })
   }, [lang])
@@ -54,15 +54,15 @@ export default function ReturnsPage() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
             <div className="bg-anthracite-800 rounded-2xl border border-gold-700/10 p-5 flex flex-col gap-3">
               <div className="w-10 h-10 rounded-xl bg-gold/10 flex items-center justify-center">
-                <RotateCcw size={20} className="text-gold" />
+                <BadgeCheck size={20} className="text-gold" />
               </div>
               <h3 className="text-white font-semibold text-sm">
-                {lang === 'uz' ? 'Muddat — 14 kun' : 'Срок — 14 дней'}
+                {lang === 'uz' ? 'Faqat nuqsonli mahsulotlar' : 'Только товар с браком'}
               </h3>
               <p className="text-gray-400 text-xs leading-relaxed">
                 {lang === 'uz'
-                  ? 'Mahsulotni olgan kundan boshlab 14 kun ichida qaytarish mumkin.'
-                  : 'Товар можно вернуть в течение 14 дней с момента получения.'}
+                  ? "Qaytarish faqat ishlab chiqarish nuqsoni yoki yetkazib berishda shikastlanish aniqlangan mahsulotlar uchun amal qiladi."
+                  : 'Возврат возможен только для товара с производственным браком или повреждением при доставке.'}
               </p>
             </div>
             <div className="bg-anthracite-800 rounded-2xl border border-gold-700/10 p-5 flex flex-col gap-3">
@@ -70,12 +70,12 @@ export default function ReturnsPage() {
                 <Truck size={20} className="text-gold" />
               </div>
               <h3 className="text-white font-semibold text-sm">
-                {lang === 'uz' ? "Qaytarish yetkazib berishi" : 'Доставка при возврате'}
+                {lang === 'uz' ? 'Bepul qaytarish' : 'Бесплатно для клиента'}
               </h3>
               <p className="text-gray-400 text-xs leading-relaxed">
                 {lang === 'uz'
-                  ? "Mahsulotni qaytarib yuborish xarajatini xaridor to'laydi."
-                  : 'Расходы на обратную доставку товара оплачивает покупатель.'}
+                  ? "Agar nuqson tasdiqlansa, qaytarish xarajatlarini xaridor to'lamaydi."
+                  : 'При подтверждённом браке расходы на возврат покупатель не несёт.'}
               </p>
             </div>
             <div className="bg-anthracite-800 rounded-2xl border border-gold-700/10 p-5 flex flex-col gap-3">
@@ -87,8 +87,8 @@ export default function ReturnsPage() {
               </h3>
               <p className="text-gray-400 text-xs leading-relaxed">
                 {lang === 'uz'
-                  ? "Qaytarishni rasmiylashtirish uchun +998 95 185 47 97 raqamiga qo'ng'iroq qiling."
-                  : 'Чтобы оформить возврат, позвоните нам: +998 95 185 47 97.'}
+                  ? "Brakni tasdiqlash va qaytarishni rasmiylashtirish uchun +998 95 185 47 97 raqamiga qo'ng'iroq qiling."
+                  : 'Чтобы подтвердить брак и оформить возврат, позвоните нам: +998 95 185 47 97.'}
               </p>
             </div>
           </div>
@@ -104,8 +104,8 @@ export default function ReturnsPage() {
           </div>
           <p className="text-gray-300 text-sm leading-7">
             {lang === 'uz'
-              ? "Qaytarish muddati tugagandan so'ng ham mahsulotlarga zavod kafolatiga murojaat qilishingiz mumkin. Batafsil: "
-              : 'Помимо возврата, на всю продукцию действует заводская гарантия — подробнее на странице '}
+              ? "Barcha mahsulotlar zavod kafolatiga ega. Batafsil: "
+              : 'На всю продукцию действует заводская гарантия — подробнее на странице '}
             <Link to="/delivery" className="text-gold hover:underline">
               {lang === 'uz' ? "yetkazib berish va to'lov" : 'доставки и оплаты'}
             </Link>
