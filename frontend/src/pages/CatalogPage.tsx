@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronLeft, ChevronRight, ListFilter, Package, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import type { ModelCard, Category } from '../api/client'
 import { fetchModels, fetchCategories } from '../api/client'
 import ModelCardComponent from '../components/ModelCard'
@@ -103,49 +103,54 @@ export default function CatalogPage() {
   const [allModels, setAllModels] = useState<ModelCard[]>([])
   const [allCategories, setAllCategories] = useState<Category[]>([])
   const [loading, setLoading]     = useState(true)
-  // Selected category lives in the URL (not useState) — otherwise pressing
-  // the browser Back button after opening a product remounts CatalogPage
-  // with no memory of which category was selected, dumping the customer
-  // back at "Все категории" instead of the subcategory list they came from.
-  const [searchParams, setSearchParams] = useSearchParams()
-  const catParam = searchParams.get('cat')
-  const selectedCatId = catParam ? Number(catParam) : null
-  const setSelectedCatId = (id: number | null) => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        if (id == null) next.delete('cat')
-        else next.set('cat', String(id))
-        return next
-      },
-      { replace: true },
-    )
-  }
+  const navigate = useNavigate()
+  // Current category lives in the URL path (/catalog/<slug>), not useState —
+  // otherwise pressing the browser Back button after opening a product
+  // remounts CatalogPage with no memory of which category was selected,
+  // dumping the customer back at "Все категории" instead of the
+  // subcategory list they came from. A single slug segment is enough to
+  // identify any node regardless of tree depth (slugs are unique across
+  // the whole categories table — see backend crud._unique_slug), so there's
+  // no need to separately track a multi-level drill path: whether the
+  // resolved category is a branch (show its children as tiles) or a leaf
+  // (show the product grid) is derived below from the category tree itself.
+  const { slug } = useParams<{ slug?: string }>()
+  const [searchParams] = useSearchParams()
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false)
-  // Path of category ids drilled into via the tile picker (e.g. Радиаторы →
-  // Вертикальные) — separate from selectedCatId, which only gets set once a
-  // *leaf* category (no children) is reached and the product grid takes over.
-  // Lives in the URL with a real history entry per step (replace: false) —
-  // a plain useState here meant drilling through 2-3 tile levels left zero
-  // trace in browser history, so pressing the phone's Back button skipped
-  // straight past the whole catalog to whatever page came before /catalog
-  // instead of undoing one level at a time (confirmed bug 2026-07-14).
-  const pathParam = searchParams.get('path')
-  const drillPath = useMemo(
-    () => (pathParam ? pathParam.split(',').map(Number).filter((n) => !Number.isNaN(n)) : []),
-    [pathParam],
+
+  const currentCat = useMemo(
+    () => (slug ? allCategories.find((c) => c.slug === slug) : undefined),
+    [slug, allCategories],
   )
-  const setDrillPath = (path: number[]) => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        if (path.length === 0) next.delete('path')
-        else next.set('path', path.join(','))
-        return next
-      },
-      { replace: false },
-    )
+  const hasChildren = useMemo(() => {
+    const parentIds = new Set(allCategories.filter((c) => c.parent_id != null).map((c) => c.parent_id))
+    return (id: number) => parentIds.has(id)
+  }, [allCategories])
+  // Sidebar + product grid only ever show once a *leaf* category has been
+  // reached (same rule the old id-based selectedCatId used) — a branch
+  // category's own URL shows the tile picker for its children instead, so
+  // every drill level (Радиаторы → Вертикальные → 2-колонные) gets its own
+  // real, bookmarkable URL and its own browser-history entry.
+  const isLeafSelected = currentCat != null && !hasChildren(currentCat.id)
+  const selectedCatId = isLeafSelected ? currentCat!.id : null
+
+  // Legacy `/catalog?cat=<id>` links (already indexed by Google before this
+  // switch to slugs) still resolve — a soft client-side redirect to the
+  // canonical slug URL once categories are loaded, not a true server 301
+  // (would need a backend route keyed on the numeric id ahead of the SPA
+  // shell, not worth the infra for the handful of impressions these got).
+  useEffect(() => {
+    if (slug || allCategories.length === 0) return
+    const legacyId = searchParams.get('cat')
+    if (!legacyId) return
+    const cat = allCategories.find((c) => c.id === Number(legacyId))
+    if (cat) navigate(`/catalog/${cat.slug}`, { replace: true })
+  }, [slug, searchParams, allCategories, navigate])
+
+  const goToCategoryId = (id: number) => {
+    const cat = allCategories.find((c) => c.id === id)
+    if (cat) navigate(`/catalog/${cat.slug}`)
   }
 
   useEffect(() => {
@@ -158,15 +163,16 @@ export default function CatalogPage() {
   }, [])
 
   useEffect(() => {
+    const label = currentCat ? (lang === 'uz' ? (currentCat.name_uz || currentCat.name_ru) : currentCat.name_ru) : null
     setSeo({
-      title: 'SR Lux — Премиальные системы отопления и климат-контроля',
-      description: t.heroSubtitle,
-      path: '/catalog',
+      title: label ? `${label} — SR Lux` : 'SR Lux — Премиальные системы отопления и климат-контроля',
+      description: label ? `${label} — каталог SR Lux. ${t.heroSubtitle}` : t.heroSubtitle,
+      path: currentCat ? `/catalog/${currentCat.slug}` : '/catalog',
       image: '/public_assets/logo-horizontal.png',
       type: 'website',
       jsonLd: organizationJsonLd(),
     })
-  }, [lang, t.heroSubtitle])
+  }, [lang, t.heroSubtitle, currentCat])
 
   const catTree = useMemo(() => buildTree(allCategories), [allCategories])
 
@@ -196,16 +202,18 @@ export default function CatalogPage() {
     }
   }, [allCategories])
 
-  // The tile grid currently on screen: root categories when drillPath is
-  // empty, otherwise the children of the last category drilled into.
+  // The tile grid currently on screen: root categories at /catalog, or the
+  // children of currentCat once its slug identifies a branch category.
   const currentTileNodes = useMemo(() => {
-    let nodes = catTree
-    for (const id of drillPath) {
-      const found = nodes.find((n) => n.id === id)
-      nodes = found ? found.children : []
+    if (!currentCat) return catTree
+    const stack = [...catTree]
+    while (stack.length) {
+      const node = stack.pop()!
+      if (node.id === currentCat.id) return node.children
+      stack.push(...node.children)
     }
-    return nodes
-  }, [catTree, drillPath])
+    return catTree
+  }, [catTree, currentCat])
 
   const currentTiles = useMemo(() => {
     return currentTileNodes.map((node) => {
@@ -217,26 +225,34 @@ export default function CatalogPage() {
     })
   }, [currentTileNodes, allModels, descendantIds])
 
-  // Breadcrumb trail for the tile picker — the categories drilled into so far.
+  // Breadcrumb trail for the tile picker — currentCat's ancestor chain
+  // (inclusive), derived by walking parent_id since every node's full
+  // lineage is always reconstructable from allCategories — no separate
+  // drill-path state to keep in sync.
   const drillBreadcrumb = useMemo(() => {
+    if (!currentCat) return []
     const byId = new Map(allCategories.map((c) => [c.id, c]))
-    return drillPath.map((id) => byId.get(id)).filter((c): c is Category => !!c)
-  }, [drillPath, allCategories])
-
-  const handleTileClick = (node: CatNode) => {
-    if (node.children.length > 0) {
-      setDrillPath([...drillPath, node.id])
-    } else {
-      setSelectedCatId(node.id)
+    const chain: Category[] = []
+    let cur: Category | undefined = currentCat
+    while (cur) {
+      chain.unshift(cur)
+      cur = cur.parent_id != null ? byId.get(cur.parent_id) : undefined
     }
-  }
+    return chain
+  }, [currentCat, allCategories])
+
+  // Navigating to a branch's own slug shows its children as tiles (see
+  // isLeafSelected above); navigating to a leaf's slug shows the product
+  // grid — CatalogPage decides which from the URL alone, so every drill
+  // level gets a real, bookmarkable, browser-history-tracked URL (matches
+  // /catalog/<slug> being pushed, not replaced, so the phone Back button
+  // undoes one level at a time — see App.tsx route and useNavigate calls
+  // throughout this file, all plain pushes).
+  const handleTileClick = (node: CatNode) => navigate(`/catalog/${node.slug}`)
 
   // Also used by the sidebar/mobile "Все категории" resets so leaving the
   // grid always lands back at the top of the tile picker, not mid-drill.
-  const resetToRoot = () => {
-    setSelectedCatId(null)
-    setDrillPath([])
-  }
+  const resetToRoot = () => navigate('/catalog')
 
   useEffect(() => {
     if (selectedCatId == null || allCategories.length === 0) return
@@ -317,10 +333,13 @@ export default function CatalogPage() {
       {selectedCatId === null && (
         <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-10">
           {/* Breadcrumb + back, only once drilled below the root level */}
-          {drillPath.length > 0 && (
+          {drillBreadcrumb.length > 0 && (
             <div className="flex items-center flex-wrap gap-1.5 mb-5 text-sm">
               <button
-                onClick={() => setDrillPath(drillPath.slice(0, -1))}
+                onClick={() => {
+                  const parent = drillBreadcrumb.length > 1 ? drillBreadcrumb[drillBreadcrumb.length - 2] : null
+                  navigate(parent ? `/catalog/${parent.slug}` : '/catalog')
+                }}
                 className="flex items-center gap-1 mr-2 px-2.5 py-1 rounded-lg border border-gold-700/30 text-gold hover:bg-gold/5 transition-colors"
               >
                 <ChevronLeft size={14} />
@@ -333,7 +352,7 @@ export default function CatalogPage() {
                 <span key={cat.id} className="flex items-center gap-1.5">
                   <ChevronRight size={12} className="text-gray-600" />
                   <button
-                    onClick={() => setDrillPath(drillPath.slice(0, i + 1))}
+                    onClick={() => navigate(`/catalog/${cat.slug}`)}
                     className={i === drillBreadcrumb.length - 1 ? 'text-white font-medium' : 'text-gray-400 hover:text-white transition-colors'}
                   >
                     {lang === 'uz' ? (cat.name_uz || cat.name_ru) : cat.name_ru}
@@ -411,7 +430,7 @@ export default function CatalogPage() {
                     {t.allCategories}
                   </button>
                 </li>
-                <CategoryTree nodes={catTree} depth={0} selectedCatId={selectedCatId} onSelect={setSelectedCatId} lang={lang} expandedIds={expandedIds} onToggle={toggleExpand} />
+                <CategoryTree nodes={catTree} depth={0} selectedCatId={selectedCatId} onSelect={goToCategoryId} lang={lang} expandedIds={expandedIds} onToggle={toggleExpand} />
               </ul>
             </div>
           </aside>
@@ -479,7 +498,7 @@ export default function CatalogPage() {
                       nodes={catTree}
                       depth={0}
                       selectedCatId={selectedCatId}
-                      onSelect={(id) => { setSelectedCatId(id); setMobileSheetOpen(false) }}
+                      onSelect={(id) => { goToCategoryId(id); setMobileSheetOpen(false) }}
                       lang={lang}
                       expandedIds={expandedIds}
                       onToggle={toggleExpand}

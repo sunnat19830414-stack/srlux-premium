@@ -103,6 +103,7 @@ export default function App() {
                   <Routes>
                     <Route path="/" element={<HomePage cartCount={cartCount} />} />
                     <Route path="/catalog" element={<CatalogPage />} />
+                    <Route path="/catalog/:slug" element={<CatalogPage />} />
                     <Route path="/model/:code" element={<ModelPage onAddToCart={addToCart} />} />
                     <Route path="/product/:slug" element={<ProductPage onAddToCart={addToCart} />} />
                     <Route

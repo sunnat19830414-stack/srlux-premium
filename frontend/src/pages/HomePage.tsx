@@ -250,7 +250,7 @@ export default function HomePage({ cartCount = 0 }: HomePageProps) {
             {categoryTiles.map(({ rootId, cat, image, count }) => (
               <Link
                 key={rootId}
-                to={`/catalog?cat=${rootId}`}
+                to={`/catalog/${cat!.slug}`}
                 className="group relative h-48 sm:h-56 rounded-xl overflow-hidden border border-gold-700/10 bg-anthracite-800"
               >
                 {image ? (
@@ -289,7 +289,7 @@ export default function HomePage({ cartCount = 0 }: HomePageProps) {
           {COLLECTIONS.map((c) => (
             <Link
               key={c.catId}
-              to={`/catalog?cat=${c.catId}`}
+              to={`/catalog/${categories.find((cat) => cat.id === c.catId)?.slug ?? ''}`}
               className="group relative shrink-0 w-[78%] sm:w-auto h-56 rounded-2xl overflow-hidden border border-gold-700/10 bg-anthracite-800 snap-start"
             >
               {(() => {
@@ -330,7 +330,7 @@ export default function HomePage({ cartCount = 0 }: HomePageProps) {
           {ROOM_PICKS.map((r) => (
             <Link
               key={r.catId}
-              to={`/catalog?cat=${r.catId}`}
+              to={`/catalog/${categories.find((cat) => cat.id === r.catId)?.slug ?? ''}`}
               className="flex items-center justify-between bg-anthracite-900 hover:bg-black/40 rounded-xl px-4 py-3.5 text-white font-semibold text-sm transition-colors border border-gold-700/10"
             >
               <span className="flex items-center gap-2.5">

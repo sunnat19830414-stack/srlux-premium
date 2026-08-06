@@ -93,7 +93,7 @@ async def sitemap(db: AsyncSession = Depends(get_db)):
     urls += [f"{base}/model/{r['code']}" for r in rows]
 
     categories = await crud.get_categories(db)
-    urls += [f"{base}/catalog?cat={c.id}" for c in categories]
+    urls += [f"{base}/catalog/{c.slug}" for c in categories]
 
     body = ['<?xml version="1.0" encoding="UTF-8"?>']
     body.append('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">')

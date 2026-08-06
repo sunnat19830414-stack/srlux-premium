@@ -15,8 +15,25 @@ from models import (
 
 # ── Slugify helper ─────────────────────────────────────────────────────────────
 
+# Standard GOST-style Cyrillic→Latin map so slugs built from Russian names
+# are readable ASCII. Without this, Cyrillic passed straight through the
+# regex below untouched (\w matches Unicode word chars, not just ASCII),
+# producing slugs like "вертикальные" instead of "vertikalnye".
+_CYRILLIC_TRANSLIT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "h", "ц": "c", "ч": "ch", "ш": "sh", "щ": "sch",
+    "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+
+
+def _translit(text: str) -> str:
+    return "".join(_CYRILLIC_TRANSLIT.get(ch, ch) for ch in text)
+
+
 def _slugify(text: str) -> str:
-    text = text.lower().strip()
+    text = _translit(text.lower().strip())
     text = re.sub(r"[^\w\s-]", "", text)
     text = re.sub(r"[\s_-]+", "-", text)
     return text
