@@ -5,6 +5,8 @@ SR Lux Premium — FastAPI backend
 import logging
 from contextlib import asynccontextmanager
 
+from xml.sax.saxutils import escape
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -81,7 +83,7 @@ async def health():
 STATIC_SITEMAP_PATHS = ["", "about", "contacts", "delivery"]
 
 
-@app.get("/sitemap.xml", tags=["system"])
+@app.api_route("/sitemap.xml", methods=["GET", "HEAD"], tags=["system"])
 async def sitemap(db: AsyncSession = Depends(get_db)):
     base = "https://srlux.uz"
     urls = [f"{base}/{p}" if p else f"{base}/" for p in STATIC_SITEMAP_PATHS]
@@ -97,6 +99,82 @@ async def sitemap(db: AsyncSession = Depends(get_db)):
     for u in urls:
         body.append(f"<url><loc>{u}</loc></url>")
     body.append("</urlset>")
+
+    return Response(content="\n".join(body), media_type="application/xml")
+
+
+# ── Google Merchant Center product feed ────────────────────────────────────
+#
+# One <item> per model card (same grouping/data source as the public catalog
+# and sitemap — crud.get_model_cards), since that's exactly what "link"
+# below points to: every colour/size variant of a model lives on one
+# /model/<code> page with no per-SKU URL, so a single feed item using the
+# model's "from" price is the accurate offer for that landing page, not a
+# compromise. Items without a real image or a positive price are skipped —
+# Merchant Center rejects those outright anyway.
+#
+# google_product_category is deliberately omitted: guessing a Google
+# taxonomy string/ID without verifying it against Google's own list risks
+# miscategorising every product, and Merchant Center can auto-assign this
+# from title/description well enough for the free-listings tier. Revisit
+# only if the user wants to map it deliberately per Google's taxonomy file.
+@app.api_route("/products.xml", methods=["GET", "HEAD"], tags=["system"])
+async def merchant_feed(db: AsyncSession = Depends(get_db)):
+    base = "https://srlux.uz"
+    rows = await crud.get_model_cards(db)
+
+    body = ['<?xml version="1.0" encoding="UTF-8"?>']
+    body.append('<rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">')
+    body.append("<channel>")
+    body.append("<title>SR Lux</title>")
+    body.append(f"<link>{base}</link>")
+    body.append("<description>Премиальные радиаторы, полотенцесушители и климат-контроль — SR Lux, Ташкент</description>")
+
+    skipped_no_image = 0
+    skipped_no_price = 0
+    for r in rows:
+        image_url = r["image_url"]
+        price_from = r["price_from"]
+        if not image_url:
+            skipped_no_image += 1
+            continue
+        if not price_from or price_from <= 0:
+            skipped_no_price += 1
+            continue
+
+        image_link = image_url if image_url.startswith("http") else f"{base}{image_url}"
+        link = f"{base}/model/{r['code']}"
+        name = escape(r["name_ru"] or r["code"])
+        category_name = r["category_name"] or ""
+        description = escape(
+            f"{r['name_ru'] or r['code']}. Категория: {category_name}. "
+            f"Премиальное отопительное оборудование SR Lux, склад в Ташкенте."
+        )
+        availability = "in_stock" if (r["total_stock"] or 0) > 0 else "out_of_stock"
+        price = f"{int(price_from)} UZS"
+
+        body.append("<item>")
+        body.append(f"<g:id>{escape(r['code'])}</g:id>")
+        body.append(f"<title>{name}</title>")
+        body.append(f"<description>{description}</description>")
+        body.append(f"<link>{escape(link)}</link>")
+        body.append(f"<g:image_link>{escape(image_link)}</g:image_link>")
+        body.append(f"<g:availability>{availability}</g:availability>")
+        body.append(f"<g:price>{price}</g:price>")
+        body.append("<g:brand>SR Lux</g:brand>")
+        body.append("<g:condition>new</g:condition>")
+        body.append("<g:identifier_exists>false</g:identifier_exists>")
+        if category_name:
+            body.append(f"<g:product_type>{escape(category_name)}</g:product_type>")
+        body.append("</item>")
+
+    logger.info(
+        f"Merchant-фид: отдано {len(rows) - skipped_no_image - skipped_no_price} товаров, "
+        f"пропущено без фото={skipped_no_image}, без цены={skipped_no_price}"
+    )
+
+    body.append("</channel>")
+    body.append("</rss>")
 
     return Response(content="\n".join(body), media_type="application/xml")
 
