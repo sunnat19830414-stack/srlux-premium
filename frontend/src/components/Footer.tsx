@@ -79,6 +79,11 @@ export default function Footer() {
                 </Link>
               </li>
               <li>
+                <Link to="/returns" className="text-gray-400 hover:text-gold text-sm transition-colors">
+                  {t.returns}
+                </Link>
+              </li>
+              <li>
                 <Link to="/contacts" className="text-gray-400 hover:text-gold text-sm transition-colors">
                   {t.contacts}
                 </Link>

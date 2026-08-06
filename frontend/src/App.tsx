@@ -13,6 +13,7 @@ import CatalogPage from './pages/CatalogPage'
 import HomePage from './pages/HomePage'
 import ContactsPage from './pages/ContactsPage'
 import DeliveryPage from './pages/DeliveryPage'
+import ReturnsPage from './pages/ReturnsPage'
 import ModelPage from './pages/ModelPage'
 import ProductPage from './pages/ProductPage'
 import AdminLayout from './pages/admin/AdminLayout'
@@ -118,6 +119,7 @@ export default function App() {
                     <Route path="/about" element={<AboutPage />} />
                     <Route path="/contacts" element={<ContactsPage />} />
                     <Route path="/delivery" element={<DeliveryPage />} />
+                    <Route path="/returns" element={<ReturnsPage />} />
                   </Routes>
                 </main>
                 <Footer />

@@ -80,7 +80,7 @@ async def health():
     return {"status": "ok"}
 
 
-STATIC_SITEMAP_PATHS = ["", "about", "contacts", "delivery"]
+STATIC_SITEMAP_PATHS = ["", "about", "contacts", "delivery", "returns"]
 
 
 @app.api_route("/sitemap.xml", methods=["GET", "HEAD"], tags=["system"])

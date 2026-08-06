@@ -935,6 +935,14 @@ def sync_entity2(usd_rate: Decimal) -> None:
         if price_uzs <= 0:
             logger.warning(f"«Трап»: {p.get('ref')} — нулевая/некорректная цена, будет пропущен upsert'ом")
 
+        # entity2export.php hardcodes currency='USD' for every «Трап» product
+        # (see entity=2's Dolibarr module — prices there are entered in USD,
+        # same as entity=1), so the raw value is already the USD price —
+        # mirrors entity=1's own "price_usd" semantics (raw pre-conversion
+        # Dolibarr value, admin-only PDF catalog generator's price source).
+        raw_price = p.get("price")
+        price_usd = float(raw_price) if raw_price and float(raw_price) > 0 else None
+
         image_url = _download_trap_photo(p["id"], p["ref"]) if p.get("has_photo") else None
 
         payload.append({
@@ -942,6 +950,7 @@ def sync_entity2(usd_rate: Decimal) -> None:
             "sku": p["ref"],
             "name_ru": p.get("label") or p["ref"],
             "price_uzs": float(price_uzs),
+            "price_usd": price_usd,
             "stock": stock,
             "image_url": image_url,
             "is_active": is_active,
@@ -1198,6 +1207,14 @@ def generate_static_snapshots():
             "path": "/delivery",
             "title": "Доставка и оплата — SR Lux",
             "description": "Условия доставки и оплаты систем отопления SR Lux по Ташкенту и Узбекистану.",
+            "image": None,
+            "jsonld": None,
+        },
+        {
+            "file": "returns.html",
+            "path": "/returns",
+            "title": "Возврат товара — SR Lux",
+            "description": "Условия возврата товаров SR Lux: 14 дней, Узбекистан и Казахстан.",
             "image": None,
             "jsonld": None,
         },
