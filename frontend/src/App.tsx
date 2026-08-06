@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import type { Product, Variant } from './api/client'
-import DevBanner from './components/DevBanner'
 import FloatingWhatsApp from './components/FloatingWhatsApp'
 import ScrollToTop from './components/ScrollToTop'
 import Footer from './components/Footer'
@@ -99,7 +98,6 @@ export default function App() {
             path="/*"
             element={
               <div className="min-h-screen flex flex-col bg-anthracite-900 text-white font-sans">
-                <DevBanner />
                 <Header cartCount={cartCount} />
                 <main className="flex-1">
                   <Routes>
