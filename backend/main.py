@@ -4,6 +4,7 @@ SR Lux Premium — FastAPI backend
 
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from xml.sax.saxutils import escape
 
@@ -175,6 +176,92 @@ async def merchant_feed(db: AsyncSession = Depends(get_db)):
 
     body.append("</channel>")
     body.append("</rss>")
+
+    return Response(content="\n".join(body), media_type="application/xml")
+
+
+# ── Yandex Market / Yandex Direct product feed (YML) ────────────────────────
+#
+# Same data source and same skip rules as the Google feed above
+# (crud.get_model_cards; skip items with no image or no positive price), so
+# the two feeds never disagree about which products are listed. UZS is a
+# supported YML currency id — confirmed against Yandex's published currency
+# list (yandex.ru/support/direct/en/feeds/requirements-yml) rather than
+# assumed — so prices pass through as plain UZS, no conversion.
+#
+# categoryId on each offer must reference an id present in <categories>;
+# crud.get_categories already returns every ancestor of a product's leaf
+# category, so r["category_id"] is always resolvable there. No DOCTYPE
+# (shops.dtd) is emitted — Yandex's own feed generators omit it too, and it
+# only invites external-DTD-fetch complications for no compliance benefit.
+@app.api_route("/market.yml", methods=["GET", "HEAD"], tags=["system"])
+async def yandex_market_feed(db: AsyncSession = Depends(get_db)):
+    base = "https://srlux.uz"
+    rows = await crud.get_model_cards(db)
+    cats = await crud.get_categories(db)
+
+    body = ['<?xml version="1.0" encoding="UTF-8"?>']
+    body.append(f'<yml_catalog date="{datetime.now().strftime("%Y-%m-%d %H:%M")}">')
+    body.append("<shop>")
+    body.append("<name>SR Lux</name>")
+    body.append("<company>SR Lux</company>")
+    body.append(f"<url>{base}</url>")
+    body.append('<currencies><currency id="UZS" rate="1"/></currencies>')
+
+    body.append("<categories>")
+    for c in cats:
+        if c.parent_id:
+            body.append(f'<category id="{c.id}" parentId="{c.parent_id}">{escape(c.name_ru)}</category>')
+        else:
+            body.append(f'<category id="{c.id}">{escape(c.name_ru)}</category>')
+    body.append("</categories>")
+
+    body.append("<offers>")
+    skipped_no_image = 0
+    skipped_no_price = 0
+    skipped_no_category = 0
+    for r in rows:
+        image_url = r["image_url"]
+        price_from = r["price_from"]
+        if not image_url:
+            skipped_no_image += 1
+            continue
+        if not price_from or price_from <= 0:
+            skipped_no_price += 1
+            continue
+        if not r["category_id"]:
+            skipped_no_category += 1
+            continue
+
+        image_link = image_url if image_url.startswith("http") else f"{base}{image_url}"
+        link = f"{base}/model/{r['code']}"
+        name = escape(r["name_ru"] or r["code"])
+        category_name = r["category_name"] or ""
+        description = escape(
+            f"{r['name_ru'] or r['code']}. Категория: {category_name}. "
+            f"Премиальное отопительное оборудование SR Lux, склад в Ташкенте."
+        )
+        available = "true" if (r["total_stock"] or 0) > 0 else "false"
+
+        body.append(f'<offer id="{escape(r["code"])}" available="{available}">')
+        body.append(f"<url>{escape(link)}</url>")
+        body.append(f"<price>{int(price_from)}</price>")
+        body.append("<currencyId>UZS</currencyId>")
+        body.append(f"<categoryId>{r['category_id']}</categoryId>")
+        body.append(f"<picture>{escape(image_link)}</picture>")
+        body.append(f"<name>{name}</name>")
+        body.append(f"<description>{description}</description>")
+        body.append("<vendor>SR Lux</vendor>")
+        body.append("</offer>")
+
+    logger.info(
+        f"Yandex YML-фид: отдано {len(rows) - skipped_no_image - skipped_no_price - skipped_no_category} товаров, "
+        f"пропущено без фото={skipped_no_image}, без цены={skipped_no_price}, без категории={skipped_no_category}"
+    )
+
+    body.append("</offers>")
+    body.append("</shop>")
+    body.append("</yml_catalog>")
 
     return Response(content="\n".join(body), media_type="application/xml")
 
