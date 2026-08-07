@@ -10,6 +10,8 @@ import { setSeo } from '../lib/seo'
 declare global {
   interface Window {
     dataLayer: Record<string, unknown>[]
+    renderOptIn?: () => void
+    gapi?: { load: (name: string, cb: () => void) => void; surveyoptin: { render: (opts: Record<string, unknown>) => void } }
   }
 }
 
@@ -41,9 +43,15 @@ export default function CartPage({ items, onCartChange }: Props) {
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [address, setAddress] = useState('')
+  const [email, setEmail] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState('')
+  // Captured only on successful submit, alongside the order's own number —
+  // used to trigger the Google Customer Reviews opt-in survey below, kept
+  // separate from the live `email` field so clearing the form after
+  // checkout doesn't blank the value the success screen still needs.
+  const [placedOrder, setPlacedOrder] = useState<{ orderNumber: string; email: string } | null>(null)
   const [projectFile, setProjectFile] = useState<UploadedFile | null>(null)
   const [uploadingFile, setUploadingFile] = useState(false)
   const [fileError, setFileError] = useState('')
@@ -111,6 +119,7 @@ export default function CartPage({ items, onCartChange }: Props) {
         customer_name: name,
         customer_phone: phone,
         customer_address: address || undefined,
+        customer_email: email || undefined,
         items: items.map((i) => ({
           product_id: i.id,
           variant_id: i.variant?.id,
@@ -121,6 +130,7 @@ export default function CartPage({ items, onCartChange }: Props) {
         project_file_name: projectFile?.filename,
       })
       setSuccess(true)
+      setPlacedOrder({ orderNumber: res.data.order_number, email })
       onCartChange([])
       setProjectFile(null)
       // Google Ads "Покупка" conversion (AW-18326560711/FVQYCMiyj9EcEMe_5KJE)
@@ -139,6 +149,45 @@ export default function CartPage({ items, onCartChange }: Props) {
       setSubmitting(false)
     }
   }
+
+  // Google Customer Reviews opt-in survey — only fires when the customer
+  // gave an email, per the program's required fields (merchant_id, order_id,
+  // email, delivery_country, estimated_delivery_date). delivery_country
+  // isn't actually collected at checkout (address is free text), so this
+  // defaults to "UZ" — the business's home market and the vast majority of
+  // orders. estimated_delivery_date uses the shipping policy's own filed
+  // max transit time (8 days, see Merchant Center shipping rule) as a safe
+  // upper-bound estimate, not a number invented here.
+  useEffect(() => {
+    if (!placedOrder?.email) return
+
+    const deliveryDate = new Date()
+    deliveryDate.setDate(deliveryDate.getDate() + 8)
+    const estimatedDeliveryDate = deliveryDate.toISOString().slice(0, 10)
+    const { orderNumber, email: customerEmail } = placedOrder
+
+    window.renderOptIn = () => {
+      window.gapi?.load('surveyoptin', () => {
+        window.gapi?.surveyoptin.render({
+          merchant_id: 5836233869,
+          order_id: orderNumber,
+          email: customerEmail,
+          delivery_country: 'UZ',
+          estimated_delivery_date: estimatedDeliveryDate,
+        })
+      })
+    }
+
+    const script = document.createElement('script')
+    script.src = 'https://apis.google.com/js/platform.js?onload=renderOptIn'
+    script.async = true
+    script.defer = true
+    document.body.appendChild(script)
+
+    return () => {
+      document.body.removeChild(script)
+    }
+  }, [placedOrder])
 
   if (success) {
     return (
@@ -283,6 +332,13 @@ export default function CartPage({ items, onCartChange }: Props) {
                   placeholder={t.orderPhone}
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
+                  className="w-full bg-anthracite-700 border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-gold/50"
+                />
+                <input
+                  type="email"
+                  placeholder={t.orderEmail}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-anthracite-700 border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-gold/50"
                 />
                 <textarea

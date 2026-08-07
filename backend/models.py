@@ -140,6 +140,10 @@ class Order(Base):
     customer_name = Column(String(500), nullable=False)
     customer_phone = Column(String(50), nullable=False)
     customer_address = Column(Text, nullable=True)
+    # Optional — only collected so we can trigger the Google Customer
+    # Reviews opt-in survey on the confirmation screen; checkout stays
+    # phone/WhatsApp-first, so this is never required.
+    customer_email = Column(String(255), nullable=True)
     total_uzs = Column(Numeric(15, 2), nullable=False)
     status = Column(String(50), default="pending")
     project_file_url = Column(String(500), nullable=True)

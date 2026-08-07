@@ -63,6 +63,7 @@ export interface OrderIn {
   customer_name: string
   customer_phone: string
   customer_address?: string
+  customer_email?: string
   items: OrderItemIn[]
   project_file_url?: string
   project_file_name?: string

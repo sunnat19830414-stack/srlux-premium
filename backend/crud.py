@@ -938,6 +938,7 @@ async def create_order(db: AsyncSession, data, items_data: list):
         customer_name=data.customer_name,
         customer_phone=data.customer_phone,
         customer_address=data.customer_address,
+        customer_email=getattr(data, "customer_email", None),
         total_uzs=total,
         status="pending",
         project_file_url=getattr(data, "project_file_url", None),

@@ -189,12 +189,16 @@ class OrderItemIn(BaseModel):
 
 
 _PHONE_RE = re.compile(r"^\+?[\d\s\-()]{5,30}$")
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class OrderIn(BaseModel):
     customer_name: str = Field(..., min_length=2, max_length=200)
     customer_phone: str = Field(..., min_length=5, max_length=30)
     customer_address: Optional[str] = Field(None, max_length=500)
+    # Optional — only used to trigger the Google Customer Reviews opt-in
+    # survey after checkout; never required to place an order.
+    customer_email: Optional[str] = Field(None, max_length=255)
     items: List[OrderItemIn] = Field(..., min_length=1, max_length=100)
     project_file_url: Optional[str] = Field(None, max_length=500)
     project_file_name: Optional[str] = Field(None, max_length=255)
@@ -204,6 +208,13 @@ class OrderIn(BaseModel):
     def validate_phone(cls, v: str) -> str:
         if not _PHONE_RE.match(v):
             raise ValueError("Некорректный номер телефона")
+        return v
+
+    @field_validator("customer_email")
+    @classmethod
+    def validate_email(cls, v: Optional[str]) -> Optional[str]:
+        if v and not _EMAIL_RE.match(v):
+            raise ValueError("Некорректный email")
         return v
 
 
@@ -223,6 +234,7 @@ class OrderOut(BaseModel):
     order_number: str
     customer_name: str
     customer_phone: str
+    customer_email: Optional[str] = None
     total_uzs: Decimal
     status: str
     project_file_url: Optional[str] = None
@@ -247,6 +259,7 @@ class AdminOrderOut(BaseModel):
     customer_name: str
     customer_phone: str
     customer_address: Optional[str]
+    customer_email: Optional[str] = None
     total_uzs: Decimal
     status: str
     created_at: datetime
@@ -433,5 +446,5 @@ class CatalogSettingsUpdateIn(BaseModel):
 
 
 class CatalogGenerateIn(BaseModel):
-    category_id: Optional[int] = None
+    category_ids: Optional[List[int]] = None
     cards_per_row: int = Field(2, ge=1, le=4)
