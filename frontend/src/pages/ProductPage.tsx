@@ -5,11 +5,9 @@ import { Link, useParams } from 'react-router-dom'
 import type { Product, Variant } from '../api/client'
 import { fetchProduct } from '../api/client'
 import { useLocale } from '../contexts/LocaleContext'
+import { useCurrency } from '../contexts/CurrencyContext'
 import { absoluteUrl, setSeo } from '../lib/seo'
-
-function fmt(n: number) {
-  return n.toLocaleString('ru-RU')
-}
+import { CONVECTOR_FAN_OPTIONS } from '../lib/convectorFans'
 
 interface Props {
   onAddToCart: (product: Product, variant: Variant | null, qty: number) => void
@@ -17,6 +15,7 @@ interface Props {
 
 export default function ProductPage({ onAddToCart }: Props) {
   const { slug } = useParams<{ slug: string }>()
+  const { currency, formatPrice: fmt } = useCurrency()
   const { lang, t } = useLocale()
   const [product, setProduct] = useState<Product | null>(null)
   const [loading, setLoading] = useState(true)
@@ -25,6 +24,9 @@ export default function ProductPage({ onAddToCart }: Props) {
   const [qty, setQty] = useState(1)
   const [added, setAdded] = useState(false)
   const [imgError, setImgError] = useState(false)
+  const [selectedImage, setSelectedImage] = useState<string | null>(null)
+  const [withFan, setWithFan] = useState(false)
+  const [fanProduct, setFanProduct] = useState<Product | null>(null)
 
   useEffect(() => {
     if (!slug) return
@@ -33,6 +35,14 @@ export default function ProductPage({ onAddToCart }: Props) {
     fetchProduct(slug)
       .then((r) => {
         setProduct(r.data)
+        setSelectedImage(r.data.image_url)
+        setImgError(false)
+        setWithFan(false)
+        const fanOption = CONVECTOR_FAN_OPTIONS[r.data.sku]
+        setFanProduct(null)
+        if (fanOption) {
+          fetchProduct(fanOption.fanSlug).then((fr) => setFanProduct(fr.data)).catch(() => setFanProduct(null))
+        }
         const name = lang === 'uz' ? (r.data.name_uz || r.data.name_ru) : r.data.name_ru
         const descRaw = (lang === 'uz' ? (r.data.description_uz || r.data.description_ru) : r.data.description_ru) || ''
         const descClean = descRaw.replace(/\s+/g, ' ').trim()
@@ -89,12 +99,20 @@ export default function ProductPage({ onAddToCart }: Props) {
     : product.description_ru
   const inStock = product.stock > 0
 
+  const fanOption = CONVECTOR_FAN_OPTIONS[product.sku]
+  const fanTotalPrice = fanOption && fanProduct ? Number(fanProduct.price_uzs) * fanOption.fanQty : 0
+
   const effectivePrice = selectedVariant
     ? product.price_uzs + Number(selectedVariant.price_modifier)
     : product.price_uzs
 
+  const totalPrice = effectivePrice + (withFan ? fanTotalPrice : 0)
+
   const handleAdd = () => {
     onAddToCart(product, selectedVariant, qty)
+    if (withFan && fanOption && fanProduct) {
+      onAddToCart(fanProduct, null, qty * fanOption.fanQty)
+    }
     setAdded(true)
     setTimeout(() => setAdded(false), 2000)
   }
@@ -113,18 +131,36 @@ export default function ProductPage({ onAddToCart }: Props) {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
           {/* Image */}
-          <div className="bg-anthracite-800 rounded-2xl overflow-hidden border border-gold-700/15 aspect-square flex items-center justify-center">
-            {product.image_url && !imgError ? (
-              <SmartImage
-                src={product.image_url}
-                alt={name}
-                className="w-full h-full object-contain"
-                onLoadError={() => setImgError(true)}
-              />
-            ) : (
-              <div className="flex flex-col items-center justify-center gap-3 text-gray-600">
-                <ImageOff size={64} />
-                <p className="text-sm text-gray-500">{t.noImage}</p>
+          <div>
+            <div className="bg-anthracite-800 rounded-2xl overflow-hidden border border-gold-700/15 aspect-square flex items-center justify-center">
+              {selectedImage && !imgError ? (
+                <SmartImage
+                  src={selectedImage}
+                  alt={name}
+                  className="w-full h-full object-contain"
+                  onLoadError={() => setImgError(true)}
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-3 text-gray-600">
+                  <ImageOff size={64} />
+                  <p className="text-sm text-gray-500">{t.noImage}</p>
+                </div>
+              )}
+            </div>
+
+            {product.images.length > 1 && (
+              <div className="flex gap-2 mt-3 overflow-x-auto">
+                {product.images.map((url) => (
+                  <button
+                    key={url}
+                    onClick={() => { setSelectedImage(url); setImgError(false) }}
+                    className={`shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 flex items-center justify-center bg-anthracite-800 transition-colors ${
+                      selectedImage === url ? 'border-gold' : 'border-gold-700/15 hover:border-gold-700/40'
+                    }`}
+                  >
+                    <img src={url} alt="" className="w-full h-full object-contain" />
+                  </button>
+                ))}
               </div>
             )}
           </div>
@@ -158,10 +194,60 @@ export default function ProductPage({ onAddToCart }: Props) {
             <div className="bg-anthracite-800 rounded-xl p-4 border border-gold-700/15">
               <p className="text-xs text-gray-500 mb-1">Цена</p>
               <p className="text-3xl font-extrabold bg-gold-gradient bg-clip-text text-transparent">
-                {fmt(effectivePrice)}
+                {fmt(totalPrice)}
               </p>
-              <p className="text-xs text-gray-500 mt-0.5">{t.sum}</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {currency === 'USD' ? '$' : t.sum}
+                {withFan && fanOption && (
+                  <span className="ml-1.5 text-gray-600">
+                    {lang === 'uz'
+                      ? `(konvektor ${fmt(effectivePrice)} + ${fanOption.fanQty}× ventilyator ${fmt(fanTotalPrice)})`
+                      : `(конвектор ${fmt(effectivePrice)} + ${fanOption.fanQty}× вентилятор ${fmt(fanTotalPrice)})`}
+                  </span>
+                )}
+              </p>
             </div>
+
+            {/* Естественная / принудительная конвекция — только у моделей,
+                для которых заведён вентиляторный комплект (см. convectorFans.ts) */}
+            {fanOption && (
+              <div className="bg-anthracite-800 rounded-xl p-4 border border-gold-700/15">
+                <div className="flex items-center justify-between mb-3 gap-3">
+                  <p className="text-sm font-medium text-white">
+                    {lang === 'uz' ? 'Konfiguratsiya' : 'Комплектация'}
+                  </p>
+                  <div className="flex rounded-lg border border-gray-700 overflow-hidden text-xs font-semibold shrink-0">
+                    <button
+                      onClick={() => setWithFan(false)}
+                      className={`px-3 py-1.5 transition-colors ${!withFan ? 'bg-gold text-anthracite-900' : 'bg-anthracite-700 text-gray-400 hover:text-white'}`}
+                    >
+                      {lang === 'uz' ? 'Ventilyatorsiz' : 'Без вентилятора'}
+                    </button>
+                    <button
+                      onClick={() => setWithFan(true)}
+                      className={`px-3 py-1.5 transition-colors ${withFan ? 'bg-gold text-anthracite-900' : 'bg-anthracite-700 text-gray-400 hover:text-white'}`}
+                    >
+                      {lang === 'uz' ? 'Ventilyator bilan' : 'С вентилятором'}
+                    </button>
+                  </div>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-400">
+                    {lang === 'uz' ? "Issiqlik quvvati" : 'Тепловая мощность'}
+                  </span>
+                  <span className="text-white font-medium">
+                    {withFan ? fanOption.powerForcedW : fanOption.powerNaturalW} Вт
+                  </span>
+                </div>
+                {withFan && (
+                  <p className="text-xs text-gray-500 mt-2">
+                    {lang === 'uz'
+                      ? `Savatga konvektor bilan birga ${fanOption.fanQty} dona ventilyator qo'shiladi.`
+                      : `В корзину добавится ${fanOption.fanQty} шт. вентилятора вместе с конвектором.`}
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Variants */}
             {product.variants.length > 0 && (
@@ -216,13 +302,10 @@ export default function ProductPage({ onAddToCart }: Props) {
 
               <button
                 onClick={handleAdd}
-                disabled={!inStock}
                 className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-sm transition-all ${
-                  inStock
-                    ? added
-                      ? 'bg-green-600 text-white'
-                      : 'bg-gold hover:bg-gold-600 text-anthracite-900 shadow-gold hover:shadow-gold-lg'
-                    : 'bg-anthracite-700 text-gray-600 cursor-not-allowed'
+                  added
+                    ? 'bg-green-600 text-white'
+                    : 'bg-gold hover:bg-gold-600 text-anthracite-900 shadow-gold hover:shadow-gold-lg'
                 }`}
               >
                 <ShoppingCart size={16} />

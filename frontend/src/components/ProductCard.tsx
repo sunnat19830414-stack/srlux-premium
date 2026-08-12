@@ -3,18 +3,16 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { Product, Variant } from '../api/client'
 import { useLocale } from '../contexts/LocaleContext'
+import { useCurrency } from '../contexts/CurrencyContext'
 
 interface Props {
   product: Product
   onAddToCart: (product: Product, variant: Variant | null, qty: number) => void
 }
 
-function fmt(n: number) {
-  return n.toLocaleString('ru-RU')
-}
-
 export default function ProductCard({ product, onAddToCart }: Props) {
   const { lang, t } = useLocale()
+  const { currency, formatPrice } = useCurrency()
   const [selectedVariant, setSelectedVariant] = useState<Variant | null>(null)
   const [added, setAdded] = useState(false)
 
@@ -126,20 +124,17 @@ export default function ProductCard({ product, onAddToCart }: Props) {
           <div>
             <p className="text-[10px] text-gray-500 mb-0.5">{t.from}</p>
             <p className="text-xl font-bold bg-gold-gradient bg-clip-text text-transparent">
-              {fmt(effectivePrice)}
+              {formatPrice(effectivePrice)}
             </p>
-            <p className="text-[10px] text-gray-500">{t.sum}</p>
+            <p className="text-[10px] text-gray-500">{currency === 'USD' ? '$' : t.sum}</p>
           </div>
 
           <button
             onClick={handleAdd}
-            disabled={!inStock}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
-              inStock
-                ? added
-                  ? 'bg-green-600 text-white scale-95'
-                  : 'bg-gold hover:bg-gold-600 text-anthracite-900 hover:shadow-gold'
-                : 'bg-anthracite-700 text-gray-600 cursor-not-allowed'
+              added
+                ? 'bg-green-600 text-white scale-95'
+                : 'bg-gold hover:bg-gold-600 text-anthracite-900 hover:shadow-gold'
             }`}
           >
             <ShoppingCart size={14} />

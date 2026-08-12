@@ -5,9 +5,11 @@ import SmartImage from '../components/SmartImage'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import type { ModelDetail, ModelVariant, Product, RelatedModels, Variant } from '../api/client'
-import { fetchModel, fetchRelatedModels } from '../api/client'
+import { fetchModel, fetchProduct, fetchRelatedModels } from '../api/client'
 import { useLocale } from '../contexts/LocaleContext'
+import { useCurrency } from '../contexts/CurrencyContext'
 import { absoluteUrl, setSeo } from '../lib/seo'
+import { CONVECTOR_FAN_OPTIONS } from '../lib/convectorFans'
 
 const COLOR_DISPLAY: Record<string, { label_ru: string; label_uz: string; hex: string; border?: boolean }> = {
   white:      { label_ru: 'Белый',       label_uz: "Oq",        hex: '#FFFFFF', border: true },
@@ -21,10 +23,6 @@ const COLOR_DISPLAY: Record<string, { label_ru: string; label_uz: string; hex: s
 
 function colorLabel(d: { label_ru: string; label_uz: string }, lang: 'ru' | 'uz') {
   return lang === 'uz' ? d.label_uz : d.label_ru
-}
-
-function fmt(n: number) {
-  return Math.round(Number(n)).toLocaleString('ru-RU')
 }
 
 // Restricts the model's variants to a specific category branch (e.g. only
@@ -58,6 +56,7 @@ export default function ModelPage({ onAddToCart }: Props) {
     else navigate('/')
   }
   const { t, lang } = useLocale()
+  const { currency, formatPrice: fmt } = useCurrency()
   // Push-фитинги Andes (parent_model начинается с "PF-") используют это поле
   // как размер в мм, а не как количество секций радиатора — подпись должна
   // отличаться от t.sections, которая верна для радиаторов/полотенцесушителей.
@@ -88,6 +87,8 @@ export default function ModelPage({ onAddToCart }: Props) {
   const [imgError, setImgError] = useState(false)
   const [activePhoto, setActivePhoto] = useState(0)
   const [relatedModels, setRelatedModels] = useState<RelatedModels>({ similar: [], complementary: [] })
+  const [withFan, setWithFan] = useState(false)
+  const [fanProduct, setFanProduct] = useState<Product | null>(null)
 
   useEffect(() => {
     if (!code) return
@@ -106,6 +107,12 @@ export default function ModelPage({ onAddToCart }: Props) {
         setSelectedHeight(null)
         setSelectedSections(null)
         setActivePhoto(0)
+        setWithFan(false)
+        const fanOption = CONVECTOR_FAN_OPTIONS[m.code]
+        setFanProduct(null)
+        if (fanOption) {
+          fetchProduct(fanOption.fanSlug).then((fr) => setFanProduct(fr.data)).catch(() => setFanProduct(null))
+        }
         const scoped = scopeVariants(m.variants, catFilter)
         const seoImage = absoluteUrl(scoped[0]?.image_url || m.variants[0]?.image_url)
         const seoDescRaw = (m.description_ru || '').replace(/\s+/g, ' ').trim()
@@ -246,6 +253,10 @@ export default function ModelPage({ onAddToCart }: Props) {
 
   const inStock = groupTotalStock > 0
 
+  const fanOption = CONVECTOR_FAN_OPTIONS[model.code]
+  const fanTotalPrice = fanOption && fanProduct ? Number(fanProduct.price_uzs) * fanOption.fanQty : 0
+  const totalPrice = groupAvgPrice + (withFan ? fanTotalPrice : 0)
+
   const currentImage = effectiveColor
     ? (model.color_images[effectiveColor] ?? null)
     : (visibleVariants[0]?.image_url ?? Object.values(model.color_images)[0] ?? null)
@@ -288,6 +299,9 @@ export default function ModelPage({ onAddToCart }: Props) {
         ? (lang === 'uz' ? 'RAL rang so\'rovi' : 'Запрос цвета RAL') + (customRalNote.trim() ? `: ${customRalNote.trim()}` : '')
         : undefined,
     )
+    if (withFan && fanOption && fanProduct) {
+      onAddToCart(fanProduct, null, qty * fanOption.fanQty)
+    }
     setAdded(true)
     setCustomRalMode(false)
     setCustomRalNote('')
@@ -486,9 +500,18 @@ export default function ModelPage({ onAddToCart }: Props) {
                   <div>
                     <p className="text-xs text-gray-500 mb-1">{t.price}</p>
                     <p className="text-3xl font-extrabold bg-gold-gradient bg-clip-text text-transparent">
-                      {fmt(groupAvgPrice)}
+                      {fmt(totalPrice)}
                     </p>
-                    <p className="text-xs text-gray-500 mt-0.5">{t.sum}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {currency === 'USD' ? '$' : t.sum}
+                      {withFan && fanOption && (
+                        <span className="ml-1.5 text-gray-600">
+                          {lang === 'uz'
+                            ? `(konvektor ${fmt(groupAvgPrice)} + ${fanOption.fanQty}× ventilyator ${fmt(fanTotalPrice)})`
+                            : `(конвектор ${fmt(groupAvgPrice)} + ${fanOption.fanQty}× вентилятор ${fmt(fanTotalPrice)})`}
+                        </span>
+                      )}
+                    </p>
                   </div>
                   <span className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${
                     inStock ? 'bg-green-900/40 text-green-400' : 'bg-red-900/40 text-red-400'
@@ -507,6 +530,47 @@ export default function ModelPage({ onAddToCart }: Props) {
                   : sectionsAvailable.length > 1 && effectiveSections == null
                   ? (lang === 'uz' ? `${sectionLabel}ni tanlang` : `Выберите: ${sectionLabel.toLowerCase()}`)
                   : (lang === 'uz' ? 'Bunday birikma mavjud emas' : 'Такой комбинации нет в наличии')}
+              </div>
+            )}
+
+            {/* Естественная / принудительная конвекция — только у моделей,
+                для которых заведён вентиляторный комплект (см. convectorFans.ts) */}
+            {fanOption && (
+              <div className="bg-anthracite-800 rounded-xl p-4 border border-gold-700/15">
+                <div className="flex items-center justify-between mb-3 gap-3">
+                  <p className="text-sm font-medium text-white">
+                    {lang === 'uz' ? 'Konfiguratsiya' : 'Комплектация'}
+                  </p>
+                  <div className="flex rounded-lg border border-gray-700 overflow-hidden text-xs font-semibold shrink-0">
+                    <button
+                      onClick={() => setWithFan(false)}
+                      className={`px-3 py-1.5 transition-colors ${!withFan ? 'bg-gold text-anthracite-900' : 'bg-anthracite-700 text-gray-400 hover:text-white'}`}
+                    >
+                      {lang === 'uz' ? 'Ventilyatorsiz' : 'Без вентилятора'}
+                    </button>
+                    <button
+                      onClick={() => setWithFan(true)}
+                      className={`px-3 py-1.5 transition-colors ${withFan ? 'bg-gold text-anthracite-900' : 'bg-anthracite-700 text-gray-400 hover:text-white'}`}
+                    >
+                      {lang === 'uz' ? 'Ventilyator bilan' : 'С вентилятором'}
+                    </button>
+                  </div>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-400">
+                    {lang === 'uz' ? "Issiqlik quvvati" : 'Тепловая мощность'}
+                  </span>
+                  <span className="text-white font-medium">
+                    {withFan ? fanOption.powerForcedW : fanOption.powerNaturalW} Вт
+                  </span>
+                </div>
+                {withFan && (
+                  <p className="text-xs text-gray-500 mt-2">
+                    {lang === 'uz'
+                      ? `Savatga konvektor bilan birga ${fanOption.fanQty} dona ventilyator qo'shiladi.`
+                      : `В корзину добавится ${fanOption.fanQty} шт. вентилятора вместе с конвектором.`}
+                  </p>
+                )}
               </div>
             )}
 
@@ -531,9 +595,9 @@ export default function ModelPage({ onAddToCart }: Props) {
               </div>
               <button
                 onClick={handleAdd}
-                disabled={customRalMode ? model.variants.length === 0 : (!inStock || !selectedVariant)}
+                disabled={customRalMode ? model.variants.length === 0 : !selectedVariant}
                 className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-sm transition-all ${
-                  (customRalMode ? model.variants.length > 0 : (inStock && selectedVariant))
+                  (customRalMode ? model.variants.length > 0 : !!selectedVariant)
                     ? added
                       ? 'bg-green-600 text-white'
                       : 'bg-gold hover:bg-gold-600 text-anthracite-900 shadow-gold hover:shadow-gold-lg'
