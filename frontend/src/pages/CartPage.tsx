@@ -1,8 +1,8 @@
-import { Trash2, ShoppingCart, Paperclip, X, FileText } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { Trash2, ShoppingCart } from 'lucide-react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import type { Product, UploadedFile, Variant } from '../api/client'
-import { placeOrder, uploadOrderFile } from '../api/client'
+import type { Product, Variant } from '../api/client'
+import { placeOrder } from '../api/client'
 import { useEffect } from 'react'
 import { useLocale } from '../contexts/LocaleContext'
 import { useCurrency } from '../contexts/CurrencyContext'
@@ -50,10 +50,6 @@ export default function CartPage({ items, onCartChange }: Props) {
   // separate from the live `email` field so clearing the form after
   // checkout doesn't blank the value the success screen still needs.
   const [placedOrder, setPlacedOrder] = useState<{ orderNumber: string; email: string } | null>(null)
-  const [projectFile, setProjectFile] = useState<UploadedFile | null>(null)
-  const [uploadingFile, setUploadingFile] = useState(false)
-  const [fileError, setFileError] = useState('')
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Custom-RAL requests have no final price yet (manager confirms it after
   // discussing the colour), so they're excluded from the checkout total.
@@ -83,31 +79,6 @@ export default function CartPage({ items, onCartChange }: Props) {
     )
   }
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    const ext = file.name.split('.').pop()?.toLowerCase()
-    if (!ext || !['pdf', 'dwg', 'dxf'].includes(ext)) {
-      setFileError(lang === 'uz' ? 'Faqat PDF, DWG, DXF' : 'Только PDF, DWG, DXF')
-      return
-    }
-    if (file.size > 25 * 1024 * 1024) {
-      setFileError(lang === 'uz' ? 'Fayl 25 MB dan katta' : 'Файл больше 25 МБ')
-      return
-    }
-    setFileError('')
-    setUploadingFile(true)
-    try {
-      const res = await uploadOrderFile(file)
-      setProjectFile(res.data)
-    } catch {
-      setFileError(lang === 'uz' ? 'Yuklab bo\'lmadi' : 'Не удалось загрузить файл')
-    } finally {
-      setUploadingFile(false)
-    }
-  }
-
   const handleOrder = async () => {
     if (!name.trim() || !phone.trim()) return
     setSubmitting(true)
@@ -124,13 +95,10 @@ export default function CartPage({ items, onCartChange }: Props) {
           quantity: i.cartQty,
           custom_ral_note: i.customRal,
         })),
-        project_file_url: projectFile?.url,
-        project_file_name: projectFile?.filename,
       })
       setSuccess(true)
       setPlacedOrder({ orderNumber: res.data.order_number, email })
       onCartChange([])
-      setProjectFile(null)
       // Google Ads "Покупка" conversion (AW-18326560711/FVQYCMiyj9EcEMe_5KJE)
       // is wired up in GTM off this dataLayer event, not a direct gtag() call —
       // GTM only exposes dataLayer to page scripts, not a global gtag().
@@ -346,44 +314,6 @@ export default function CartPage({ items, onCartChange }: Props) {
                   rows={2}
                   className="w-full bg-anthracite-700 border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-gold/50 resize-none"
                 />
-              </div>
-
-              {/* Project file — PDF/DWG/DXF for designers and contractors
-                  to attach a spec alongside the order */}
-              <div>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".pdf,.dwg,.dxf"
-                  className="hidden"
-                  onChange={handleFileSelect}
-                />
-                {projectFile ? (
-                  <div className="flex items-center gap-2 bg-anthracite-700 border border-gray-700 rounded-lg px-3 py-2.5 text-sm">
-                    <FileText size={16} className="text-gold shrink-0" />
-                    <span className="text-gray-300 truncate flex-1">{projectFile.filename}</span>
-                    <button
-                      type="button"
-                      onClick={() => setProjectFile(null)}
-                      className="text-gray-500 hover:text-red-400 transition-colors shrink-0"
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={uploadingFile}
-                    className="w-full flex items-center justify-center gap-2 border border-dashed border-gray-700 hover:border-gold/50 rounded-lg px-3 py-2.5 text-sm text-gray-400 hover:text-gold transition-colors disabled:opacity-50"
-                  >
-                    <Paperclip size={15} />
-                    {uploadingFile
-                      ? t.loading
-                      : (lang === 'uz' ? 'Loyiha fayli (PDF, DWG)' : 'Прикрепить файл проекта (PDF, DWG)')}
-                  </button>
-                )}
-                {fileError && <p className="text-red-400 text-xs mt-1">{fileError}</p>}
               </div>
 
               {error && <p className="text-red-400 text-xs">{error}</p>}
