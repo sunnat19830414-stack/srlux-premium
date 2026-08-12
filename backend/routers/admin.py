@@ -30,6 +30,8 @@ from schemas import (
     BulkImportOut,
     CategoryCreateIn,
     CategoryUpdateIn,
+    CurrencyOut,
+    CurrencyUpdateIn,
     OrderStatusUpdate,
     ProductUpdateIn,
     SyncStatusOut,
@@ -256,3 +258,14 @@ async def trigger_sync():
 
     asyncio.create_task(_run())
     return SyncStatusOut(**_sync_state)
+
+
+# ── Admin panel: currency display rate ──────────────────────────────────────────
+# Public GET is in routers/currencies.py — this is the only write path, used
+# both by the site's UZS/USD price-display toggle and (per get_usd_rate() in
+# erp_sync_dolibarr.py) by the ERP sync's own price conversion, so editing it
+# here immediately affects both.
+
+@router.patch("/currencies/{code}", response_model=CurrencyOut, dependencies=[Depends(_require_api_key)])
+async def update_currency_rate(code: str, data: CurrencyUpdateIn, db: AsyncSession = Depends(get_db)):
+    return await crud.upsert_currency_rate(db, code.upper(), data.rate_to_uzs)

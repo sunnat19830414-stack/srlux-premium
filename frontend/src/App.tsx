@@ -6,6 +6,7 @@ import ScrollToTop from './components/ScrollToTop'
 import Footer from './components/Footer'
 import Header from './components/Header'
 import { LocaleProvider } from './contexts/LocaleContext'
+import { CurrencyProvider } from './contexts/CurrencyContext'
 import AboutPage from './pages/AboutPage'
 import CartPage from './pages/CartPage'
 import CatalogPage from './pages/CatalogPage'
@@ -77,6 +78,7 @@ export default function App() {
 
   return (
     <LocaleProvider>
+    <CurrencyProvider>
       <BrowserRouter>
         <ScrollToTop />
         <Routes>
@@ -128,6 +130,7 @@ export default function App() {
           />
         </Routes>
       </BrowserRouter>
+    </CurrencyProvider>
     </LocaleProvider>
   )
 }

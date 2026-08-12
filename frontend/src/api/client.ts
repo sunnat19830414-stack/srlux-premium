@@ -86,6 +86,14 @@ export const fetchProduct = (slug: string) =>
 export const fetchCategories = () =>
   api.get<Category[]>('/api/categories')
 
+export interface CurrencyRate {
+  code: string
+  rate_to_uzs: number
+}
+
+export const fetchCurrencyRate = (code: string) =>
+  api.get<CurrencyRate>(`/api/currencies/${code}`)
+
 export const placeOrder = (data: OrderIn) =>
   api.post('/api/orders', data)
 

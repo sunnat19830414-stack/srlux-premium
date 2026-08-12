@@ -1,8 +1,64 @@
-import { RefreshCw } from 'lucide-react'
+import { Check, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { fetchCurrencyRate } from '../../api/client'
 import type { SyncStatus } from '../../api/adminClient'
-import { adminGetSyncStatus, adminTriggerSync } from '../../api/adminClient'
+import { adminGetSyncStatus, adminTriggerSync, adminUpdateCurrencyRate } from '../../api/adminClient'
 import { useToast } from '../../contexts/ToastContext'
+
+function CurrencyRateCard() {
+  const { toast } = useToast()
+  const [rate, setRate] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const load = () => {
+    fetchCurrencyRate('USD').then((r) => setRate(String(r.data.rate_to_uzs))).catch(() => {})
+  }
+
+  useEffect(() => { load() }, [])
+
+  const save = async () => {
+    const value = Number(rate)
+    if (!value || value <= 0) { toast('Курс должен быть больше нуля', 'error'); return }
+    setSaving(true)
+    try {
+      await adminUpdateCurrencyRate('USD', value)
+      toast('Курс обновлён')
+      load()
+    } catch {
+      toast('Не удалось сохранить курс', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="bg-gray-900 rounded-xl border border-gray-800 p-6 mb-4">
+      <p className="text-white font-semibold mb-1">Курс USD → UZS</p>
+      <p className="text-gray-500 text-sm mb-4">
+        Используется переключателем «сум / $» на сайте и синхронизацией с Dolibarr для перевода цен из USD.
+      </p>
+      <div className="flex items-center gap-2">
+        <span className="text-gray-500 text-sm">1 USD =</span>
+        <input
+          type="number"
+          value={rate}
+          onChange={(e) => setRate(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') save() }}
+          className="w-32 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-amber-500"
+        />
+        <span className="text-gray-500 text-sm">сум</span>
+        <button
+          onClick={save}
+          disabled={saving}
+          className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-black text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors ml-2"
+        >
+          <Check size={14} />
+          {saving ? 'Сохраняю…' : 'Сохранить'}
+        </button>
+      </div>
+    </div>
+  )
+}
 
 export default function AdminSync() {
   const { toast } = useToast()
@@ -40,6 +96,8 @@ export default function AdminSync() {
   return (
     <div className="p-8 max-w-xl">
       <h1 className="text-xl font-bold text-white mb-6">Синхронизация с Dolibarr</h1>
+
+      <CurrencyRateCard />
 
       <div className="bg-gray-900 rounded-xl border border-gray-800 p-6 mb-4">
         <div className="flex items-start justify-between gap-4 mb-5">

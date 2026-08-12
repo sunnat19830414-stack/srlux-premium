@@ -5,6 +5,7 @@ import type { Product, UploadedFile, Variant } from '../api/client'
 import { placeOrder, uploadOrderFile } from '../api/client'
 import { useEffect } from 'react'
 import { useLocale } from '../contexts/LocaleContext'
+import { useCurrency } from '../contexts/CurrencyContext'
 import { setSeo } from '../lib/seo'
 
 declare global {
@@ -26,12 +27,9 @@ interface Props {
   onCartChange: (items: CartItem[]) => void
 }
 
-function fmt(n: number) {
-  return n.toLocaleString('ru-RU')
-}
-
 export default function CartPage({ items, onCartChange }: Props) {
   const { lang, t } = useLocale()
+  const { currency, formatPrice: fmt } = useCurrency()
 
   useEffect(() => {
     setSeo({
@@ -292,7 +290,7 @@ export default function CartPage({ items, onCartChange }: Props) {
                           <p className="text-gold font-bold">
                             {fmt(unitPrice * item.cartQty)}
                           </p>
-                          <p className="text-[10px] text-gray-500">{t.sum}</p>
+                          <p className="text-[10px] text-gray-500">{currency === 'USD' ? '$' : t.sum}</p>
                         </>
                       )}
                     </div>
@@ -308,7 +306,7 @@ export default function CartPage({ items, onCartChange }: Props) {
               <div className="border-t border-gold-700/10 pt-4 space-y-1">
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">{t.total}</span>
-                  <span className="text-gold font-bold">{fmt(total)} {t.sum}</span>
+                  <span className="text-gold font-bold">{fmt(total)} {currency === 'USD' ? '$' : t.sum}</span>
                 </div>
                 {hasCustomRal && (
                   <p className="text-[11px] text-gray-500">

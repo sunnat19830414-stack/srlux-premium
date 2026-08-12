@@ -262,3 +262,10 @@ export const adminGenerateCatalog = (categoryId: number | null, cardsPerRow: num
     { category_id: categoryId, cards_per_row: cardsPerRow },
     { responseType: 'blob' },
   )
+
+// ── Currency display rate ────────────────────────────────────────────────────
+// GET is the public /api/currencies/{code} endpoint (see api/client.ts's
+// fetchCurrencyRate) — same admin session, no need for a second read path.
+
+export const adminUpdateCurrencyRate = (code: string, rateToUzs: number) =>
+  adminApi.patch<{ code: string; rate_to_uzs: number }>(`/api/admin/currencies/${code}`, { rate_to_uzs: rateToUzs })

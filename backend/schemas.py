@@ -445,6 +445,16 @@ class CatalogSettingsUpdateIn(BaseModel):
     catalog_title: Optional[str] = Field(None, min_length=1, max_length=200)
 
 
+class CurrencyOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    code: str
+    rate_to_uzs: Decimal
+
+
+class CurrencyUpdateIn(BaseModel):
+    rate_to_uzs: Decimal = Field(..., gt=0)
+
+
 class CatalogGenerateIn(BaseModel):
     category_ids: Optional[List[int]] = None
     cards_per_row: int = Field(2, ge=1, le=4)

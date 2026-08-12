@@ -2,6 +2,7 @@ import { ShoppingCart, Menu, X, Phone, MessageCircle } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useLocale } from '../contexts/LocaleContext'
+import { useCurrency } from '../contexts/CurrencyContext'
 
 interface HeaderProps {
   cartCount: number
@@ -9,6 +10,7 @@ interface HeaderProps {
 
 export default function Header({ cartCount }: HeaderProps) {
   const { lang, setLang, t } = useLocale()
+  const { currency, setCurrency } = useCurrency()
   const [menuOpen, setMenuOpen] = useState(false)
   const navigate = useNavigate()
 
@@ -86,6 +88,23 @@ export default function Header({ cartCount }: HeaderProps) {
             >
               <MessageCircle size={14} className="sm:hidden" /><MessageCircle size={16} className="hidden sm:block" />
             </a>
+
+            {/* Currency switcher */}
+            <div className="flex rounded-lg overflow-hidden border border-gold-700/30">
+              {(['UZS', 'USD'] as const).map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setCurrency(c)}
+                  className={`px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
+                    currency === c
+                      ? 'bg-gold text-anthracite-900'
+                      : 'text-gray-400 hover:text-gold'
+                  }`}
+                >
+                  {c === 'UZS' ? (lang === 'uz' ? "so'm" : 'сум') : '$'}
+                </button>
+              ))}
+            </div>
 
             {/* Language switcher */}
             <div className="flex rounded-lg overflow-hidden border border-gold-700/30">

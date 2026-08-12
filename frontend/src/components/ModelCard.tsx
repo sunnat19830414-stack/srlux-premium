@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import type { ModelCard } from '../api/client'
 import SmartImage from './SmartImage'
 import { useLocale } from '../contexts/LocaleContext'
+import { useCurrency } from '../contexts/CurrencyContext'
 
 const COLOR_HEX: Record<string, { hex: string; border?: boolean }> = {
   white:      { hex: '#FFFFFF', border: true },
@@ -12,12 +13,9 @@ const COLOR_HEX: Record<string, { hex: string; border?: boolean }> = {
   chrome:     { hex: '#C0C0C0', border: true },
 }
 
-function fmt(n: number) {
-  return Number(n).toLocaleString('ru-RU')
-}
-
 export default function ModelCard({ model, catIds }: { model: ModelCard; catIds?: number[] | null }) {
   const { t, lang } = useLocale()
+  const { currency, formatPrice: fmt } = useCurrency()
   const inStock = model.total_stock > 0
   const priceFrom = Number(model.price_from)
   const priceTo   = Number(model.price_to)
@@ -110,11 +108,13 @@ export default function ModelCard({ model, catIds }: { model: ModelCard; catIds?
             </p>
             {priceTo > priceFrom && (
               <p className="text-[10px] text-gray-400">
-                {lang === 'uz' ? `${fmt(priceTo)} so'mgacha` : `до ${fmt(priceTo)} сум`}
+                {currency === 'USD'
+                  ? (lang === 'uz' ? `${fmt(priceTo)} $ gacha` : `до ${fmt(priceTo)} $`)
+                  : (lang === 'uz' ? `${fmt(priceTo)} so'mgacha` : `до ${fmt(priceTo)} сум`)}
               </p>
             )}
             {priceTo === priceFrom && (
-              <p className="text-[10px] text-gray-400">{t.sum}</p>
+              <p className="text-[10px] text-gray-400">{currency === 'USD' ? '$' : t.sum}</p>
             )}
           </div>
           <span className="flex items-center gap-1 text-gold text-xs font-semibold group-hover:gap-2 transition-all">

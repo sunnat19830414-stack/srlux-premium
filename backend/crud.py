@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from models import (
-    CatalogPhoto, CatalogSettings, Category, Order, OrderItem,
+    CatalogPhoto, CatalogSettings, Category, Currency, Order, OrderItem,
     Product, ProductImage, ProductVariant,
 )
 
@@ -420,6 +420,24 @@ async def update_catalog_settings(db: AsyncSession, updates: dict):
     await db.commit()
     await db.refresh(settings)
     return settings
+
+
+# ── Currencies (public display-rate + admin-editable) ──────────────────────────
+
+async def get_currency(db: AsyncSession, code: str):
+    return await db.scalar(select(Currency).where(Currency.code == code))
+
+
+async def upsert_currency_rate(db: AsyncSession, code: str, rate_to_uzs):
+    currency = await get_currency(db, code)
+    if currency:
+        currency.rate_to_uzs = rate_to_uzs
+    else:
+        currency = Currency(code=code, rate_to_uzs=rate_to_uzs)
+        db.add(currency)
+    await db.commit()
+    await db.refresh(currency)
+    return currency
 
 
 async def get_model_detail(db: AsyncSession, code: str):

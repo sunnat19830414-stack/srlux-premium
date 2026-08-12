@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from database import get_db, init_db
-from routers import admin, categories, catalog, orders, products
+from routers import admin, categories, catalog, currencies, orders, products
 from routers import models as models_router
 from fastapi import Depends
 from fastapi.responses import Response
@@ -74,6 +74,7 @@ app.include_router(orders.router)
 app.include_router(admin.router)
 app.include_router(models_router.router)
 app.include_router(catalog.router)
+app.include_router(currencies.router)
 
 
 @app.get("/health", tags=["system"])
