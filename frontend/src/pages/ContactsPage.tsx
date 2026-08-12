@@ -16,7 +16,7 @@ export default function ContactsPage() {
 
   const PHONE_PRIMARY = '+998 95 185 47 97'
   const PHONE_SECONDARY = '+998 90 185 47 97'
-  const ADDRESS = lang === 'uz' ? "Toshkent sh., Usta Shirin ko'chasi 111D" : 'г. Ташкент, ул. Уста Ширин 111D'
+  const ADDRESS = lang === 'uz' ? "«Stroy Mir» bozori, Usta Shirin ko'chasi, Toshkent, 100057" : 'Рынок «Строй мир», ул. Уста Ширин, Ташкент, 100057'
   const HOURS_WEEKDAY = lang === 'uz' ? 'Du–Shanba: 9:00–18:00' : 'Пн–Сб: 9:00–18:00'
   const HOURS_SUN = lang === 'uz' ? 'Yakshanba: dam olish kuni' : 'Вс: выходной'
 
@@ -123,14 +123,9 @@ export default function ContactsPage() {
                   {lang === 'uz' ? 'Manzil' : 'Адрес'}
                 </h2>
               </div>
-              <p className="text-gray-200 font-medium mb-1">{ADDRESS}</p>
-              <p className="text-gray-500 text-sm mb-4">
-                {lang === 'uz'
-                  ? 'Ofis 3-qavat, 5-xona'
-                  : 'Офис, 3 этаж, каб. 5'}
-              </p>
+              <p className="text-gray-200 font-medium mb-4">{ADDRESS}</p>
               <a
-                href="https://maps.google.com/?q=Tashkent+Usta+Shirin+111D"
+                href="https://maps.app.goo.gl/nicRLLHHctQxuEmi8"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 text-sm text-gold hover:underline"
@@ -172,10 +167,10 @@ export default function ContactsPage() {
               <div className="text-center text-gray-600">
                 <MapPin size={32} className="mx-auto mb-2" />
                 <p className="text-sm">
-                  {lang === 'uz' ? "Usta Shirin ko'chasi 111D" : 'ул. Уста Ширин 111D'}
+                  {lang === 'uz' ? "«Stroy Mir» bozori, Usta Shirin ko'chasi" : 'Рынок «Строй мир», ул. Уста Ширин'}
                 </p>
                 <a
-                  href="https://maps.google.com/?q=Tashkent+Usta+Shirin+111D"
+                  href="https://maps.app.goo.gl/nicRLLHHctQxuEmi8"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-xs text-gold hover:underline mt-1 inline-block"
