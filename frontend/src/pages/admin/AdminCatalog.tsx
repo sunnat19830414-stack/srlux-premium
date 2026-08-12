@@ -52,11 +52,11 @@ function collectDescendants(categories: Category[], rootId: number): Set<number>
   return ids
 }
 
-function CategoryTree({ nodes, depth, selectedId, onSelect, expanded, onToggle }: {
+function CategoryTree({ nodes, depth, selectedIds, onToggleSelect, expanded, onToggle }: {
   nodes: CatNode[]
   depth: number
-  selectedId: number | null
-  onSelect: (id: number) => void
+  selectedIds: Set<number>
+  onToggleSelect: (id: number) => void
   expanded: Set<number>
   onToggle: (id: number) => void
 }) {
@@ -65,12 +65,13 @@ function CategoryTree({ nodes, depth, selectedId, onSelect, expanded, onToggle }
       {nodes.map((node) => {
         const hasChildren = node.children.length > 0
         const isExpanded = expanded.has(node.id)
+        const isSelected = selectedIds.has(node.id)
         return (
           <div key={node.id}>
             <div
               style={{ paddingLeft: `${8 + depth * 14}px` }}
               className={`flex items-center gap-1 pr-2 text-sm rounded-lg transition-colors ${
-                selectedId === node.id ? 'bg-amber-500/15 text-amber-400 font-semibold' : 'text-gray-400 hover:text-white'
+                isSelected ? 'bg-amber-500/15 text-amber-400 font-semibold' : 'text-gray-400 hover:text-white'
               }`}
             >
               {hasChildren ? (
@@ -80,12 +81,22 @@ function CategoryTree({ nodes, depth, selectedId, onSelect, expanded, onToggle }
               ) : (
                 <span className="shrink-0 w-[22px]" />
               )}
-              <button onClick={() => onSelect(node.id)} className="flex-1 text-left py-1.5 truncate">
-                {node.name_ru}
+              <button
+                onClick={() => onToggleSelect(node.id)}
+                className="flex items-center gap-2 flex-1 text-left py-1.5 truncate"
+              >
+                <span
+                  className={`shrink-0 w-3.5 h-3.5 rounded-[4px] border flex items-center justify-center ${
+                    isSelected ? 'bg-amber-500 border-amber-500' : 'border-gray-600'
+                  }`}
+                >
+                  {isSelected && <span className="w-1.5 h-1.5 rounded-[1px] bg-black" />}
+                </span>
+                <span className="truncate">{node.name_ru}</span>
               </button>
             </div>
             {hasChildren && isExpanded && (
-              <CategoryTree nodes={node.children} depth={depth + 1} selectedId={selectedId} onSelect={onSelect} expanded={expanded} onToggle={onToggle} />
+              <CategoryTree nodes={node.children} depth={depth + 1} selectedIds={selectedIds} onToggleSelect={onToggleSelect} expanded={expanded} onToggle={onToggle} />
             )}
           </div>
         )
@@ -182,7 +193,7 @@ export default function AdminCatalog() {
   const [categories, setCategories] = useState<Category[]>([])
   const [settings, setSettings] = useState<CatalogSettings | null>(null)
   const [loading, setLoading] = useState(true)
-  const [selectedCatId, setSelectedCatId] = useState<number | null>(null)
+  const [selectedCatIds, setSelectedCatIds] = useState<Set<number>>(new Set())
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [generating, setGenerating] = useState(false)
   const [companyName, setCompanyName] = useState('')
@@ -202,18 +213,26 @@ export default function AdminCatalog() {
       .finally(() => setLoading(false))
   }, [])
 
-  // Re-fetch models scoped to the selected category — some model "families"
+  // Re-fetch models scoped to the selected categories — some model "families"
   // (e.g. GZ2/GZ3 "Column" radiators) span both a vertical and a horizontal
   // sub-category, and the representative cover photo shown/printed depends on
-  // which one the caller is scoped to, so the preview must match what the
+  // which one(s) the caller is scoped to, so the preview must match what the
   // generated PDF will actually contain.
-  const reload = (catId: number | null) => {
-    adminListCatalogModels(catId).then((r) => setModels(r.data.models))
+  const reload = (catIds: Set<number>) => {
+    adminListCatalogModels(catIds.size ? Array.from(catIds) : null)
+      .then((r) => setModels(r.data.models))
+      .catch(() => toast('Не удалось обновить список моделей — попробуйте ещё раз', 'error'))
   }
+  // Debounced: checkbox multi-select fires this on every single click, and
+  // the admin API is rate-limited quite tightly (30 req/min) — selecting a
+  // dozen categories in a row would otherwise blow through that limit and
+  // start 429ing before the user finishes composing their selection.
   useEffect(() => {
-    if (!loading) reload(selectedCatId)
+    if (loading) return
+    const t = setTimeout(() => reload(selectedCatIds), 400)
+    return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCatId])
+  }, [selectedCatIds])
 
   const catTree = useMemo(() => buildTree(categories), [categories])
 
@@ -225,11 +244,20 @@ export default function AdminCatalog() {
     })
   }
 
+  const toggleCatSelect = (id: number) => {
+    setSelectedCatIds((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
   const visibleModels = useMemo(() => {
-    if (selectedCatId === null) return models
-    const scope = collectDescendants(categories, selectedCatId)
+    if (selectedCatIds.size === 0) return models
+    const scope = new Set<number>()
+    selectedCatIds.forEach((id) => collectDescendants(categories, id).forEach((d) => scope.add(d)))
     return models.filter((m) => m.category_ids.some((cid) => scope.has(cid)))
-  }, [models, categories, selectedCatId])
+  }, [models, categories, selectedCatIds])
 
   const saveSettings = async () => {
     try {
@@ -251,7 +279,7 @@ export default function AdminCatalog() {
   const generate = async () => {
     setGenerating(true)
     try {
-      const r = await adminGenerateCatalog(selectedCatId, cardsPerRow)
+      const r = await adminGenerateCatalog(selectedCatIds.size ? Array.from(selectedCatIds) : null, cardsPerRow)
       const blob = new Blob([r.data], { type: 'application/pdf' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -263,7 +291,7 @@ export default function AdminCatalog() {
       URL.revokeObjectURL(url)
       toast('PDF готов')
     } catch {
-      toast('Ошибка генерации — нет моделей в выбранной категории?', 'error')
+      toast('Ошибка генерации — нет моделей в выбранных категориях?', 'error')
     } finally {
       setGenerating(false)
     }
@@ -349,19 +377,27 @@ export default function AdminCatalog() {
         {/* Category picker */}
         <aside className="w-60 shrink-0">
           <div className="sticky top-6 bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-            <div className="px-3 py-2.5 border-b border-gray-800">
-              <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">Категория</p>
+            <div className="px-3 py-2.5 border-b border-gray-800 flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">Категории</p>
+              {selectedCatIds.size > 0 && (
+                <button
+                  onClick={() => setSelectedCatIds(new Set())}
+                  className="text-[11px] text-gray-500 hover:text-white transition-colors"
+                >
+                  Сбросить ({selectedCatIds.size})
+                </button>
+              )}
             </div>
             <div className="py-1.5 px-1">
               <button
-                onClick={() => setSelectedCatId(null)}
+                onClick={() => setSelectedCatIds(new Set())}
                 className={`w-full text-left px-3 py-1.5 rounded-lg text-sm mb-1 transition-colors ${
-                  selectedCatId === null ? 'bg-amber-500/15 text-amber-400 font-semibold' : 'text-gray-400 hover:text-white'
+                  selectedCatIds.size === 0 ? 'bg-amber-500/15 text-amber-400 font-semibold' : 'text-gray-400 hover:text-white'
                 }`}
               >
                 Весь каталог
               </button>
-              <CategoryTree nodes={catTree} depth={0} selectedId={selectedCatId} onSelect={setSelectedCatId} expanded={expanded} onToggle={toggleExpand} />
+              <CategoryTree nodes={catTree} depth={0} selectedIds={selectedCatIds} onToggleSelect={toggleCatSelect} expanded={expanded} onToggle={toggleExpand} />
             </div>
           </div>
         </aside>
@@ -369,11 +405,11 @@ export default function AdminCatalog() {
         {/* Models grid */}
         <div className="flex-1 min-w-0">
           {visibleModels.length === 0 ? (
-            <p className="text-gray-500 text-sm py-12 text-center">Нет моделей в этой категории</p>
+            <p className="text-gray-500 text-sm py-12 text-center">Нет моделей в выбранных категориях</p>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-4">
               {visibleModels.map((m) => (
-                <ModelPhotoCard key={m.code} model={m} onChanged={() => reload(selectedCatId)} />
+                <ModelPhotoCard key={m.code} model={m} onChanged={() => reload(selectedCatIds)} />
               ))}
             </div>
           )}

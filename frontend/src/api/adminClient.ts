@@ -260,9 +260,9 @@ export const adminTriggerSync = () =>
 
 // ── Catalog PDF generator ────────────────────────────────────────────────────
 
-export const adminListCatalogModels = (categoryId?: number | null) =>
+export const adminListCatalogModels = (categoryIds?: number[] | null) =>
   adminApi.get<CatalogModelList>('/api/admin/catalog/models', {
-    params: categoryId != null ? { category_id: categoryId } : undefined,
+    params: categoryIds && categoryIds.length ? { category_ids: categoryIds.join(',') } : undefined,
   })
 
 export const adminUploadCatalogPhoto = (modelCode: string, file: File) => {
@@ -293,10 +293,10 @@ export const adminUploadCatalogLogo = (file: File) => {
   })
 }
 
-export const adminGenerateCatalog = (categoryId: number | null, cardsPerRow: number = 2) =>
+export const adminGenerateCatalog = (categoryIds: number[] | null, cardsPerRow: number = 2) =>
   adminApi.post(
     '/api/admin/catalog/generate',
-    { category_id: categoryId, cards_per_row: cardsPerRow },
+    { category_ids: categoryIds && categoryIds.length ? categoryIds : null, cards_per_row: cardsPerRow },
     { responseType: 'blob' },
   )
 

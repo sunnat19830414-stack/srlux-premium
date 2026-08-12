@@ -42,6 +42,17 @@ def _resolve_scope(categories: list, category_id: Optional[int]) -> Optional[set
                 stack.append(child)
     return scope
 
+
+def _resolve_scope_multi(categories: list, category_ids: Optional[list[int]]) -> Optional[set[int]]:
+    """Union of _resolve_scope() over several category ids, or None if no filter
+    (empty/missing list — matches the single-id "no filter" convention below)."""
+    if not category_ids:
+        return None
+    scope: set[int] = set()
+    for cid in category_ids:
+        scope |= _resolve_scope(categories, cid) or set()
+    return scope
+
 UPLOADS_DIR = Path("/app/uploads")
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
@@ -64,11 +75,15 @@ async def _save_upload(file: UploadFile) -> str:
 # ── Models (with retail USD price + catalog-only photos) ──────────────────────
 
 @router.get("/models", response_model=CatalogModelListOut, dependencies=[Depends(_require_api_key)])
-async def list_catalog_models(category_id: Optional[int] = Query(None), db: AsyncSession = Depends(get_db)):
+async def list_catalog_models(
+    category_ids: Optional[str] = Query(None, description="Comma-separated category ids"),
+    db: AsyncSession = Depends(get_db),
+):
     scope = None
-    if category_id is not None:
+    if category_ids:
+        ids = [int(x) for x in category_ids.split(",") if x.strip()]
         categories = await crud.get_categories(db)
-        scope = _resolve_scope(categories, category_id)
+        scope = _resolve_scope_multi(categories, ids)
     rows = await crud.get_catalog_models(db, category_scope=list(scope) if scope else None)
     models = [
         CatalogModelOut(
@@ -147,14 +162,14 @@ async def generate_catalog(data: CatalogGenerateIn, db: AsyncSession = Depends(g
 
     categories = await crud.get_categories(db)
     settings = await crud.get_catalog_settings(db)
-    scope = _resolve_scope(categories, data.category_id)
+    scope = _resolve_scope_multi(categories, data.category_ids)
 
     models = await crud.get_catalog_models(db, category_scope=list(scope) if scope else None)
     if scope is not None:
         models = [m for m in models if scope.intersection(m["category_ids"] or [])]
 
     if not models:
-        raise HTTPException(status_code=400, detail="Нет моделей для выбранной категории")
+        raise HTTPException(status_code=400, detail="Нет моделей для выбранных категорий")
 
     pdf_bytes = await render_catalog_pdf(models, categories, settings, cards_per_row=data.cards_per_row)
     filename = "catalog.pdf"
