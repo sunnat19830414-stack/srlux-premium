@@ -1,4 +1,5 @@
 import asyncio
+import io
 import logging
 import os
 import subprocess
@@ -8,12 +9,15 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, UploadFile, File
+from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession
 
 UPLOADS_DIR = Path("/app/uploads")
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB
+MAX_IMAGE_DIM = 1600  # px, longest side -- product photos never need to be bigger
+IMAGE_QUALITY = 82
 
 import crud
 from database import get_db
@@ -48,6 +52,35 @@ if not ADMIN_API_KEY:
 
 # In-memory sync state (resets on restart — acceptable for single instance)
 _sync_state: dict = {"running": False, "last_run": None, "last_result": None, "last_success": True}
+
+
+def _process_image(data: bytes, content_type: str) -> bytes:
+    """Resize (if oversized) and recompress an uploaded photo before writing
+    it to disk. Keeps the original format so content_type/extension stay in
+    sync with what the browser sent. Falls back to the original bytes on any
+    processing error so an upload never hard-fails because of this step."""
+    if content_type not in ("image/jpeg", "image/png", "image/webp"):
+        return data  # GIF etc. -- leave untouched
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            im.load()
+            w, h = im.size
+            if max(w, h) > MAX_IMAGE_DIM:
+                scale = MAX_IMAGE_DIM / max(w, h)
+                im = im.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS)
+            buf = io.BytesIO()
+            if content_type == "image/jpeg":
+                if im.mode in ("RGBA", "P"):
+                    im = im.convert("RGB")
+                im.save(buf, "JPEG", quality=IMAGE_QUALITY, optimize=True)
+            elif content_type == "image/png":
+                im.save(buf, "PNG", optimize=True)
+            else:  # image/webp
+                im.save(buf, "WEBP", quality=IMAGE_QUALITY, method=6)
+            return buf.getvalue()
+    except Exception:
+        logger.warning("Image processing failed, storing original upload as-is", exc_info=True)
+        return data
 
 
 def _require_api_key(request: Request, x_api_key: str = Header(...)):
@@ -161,6 +194,7 @@ async def upload_product_image(product_id: int, file: UploadFile = File(...), db
     data = await file.read()
     if len(data) > MAX_IMAGE_SIZE:
         raise HTTPException(status_code=413, detail="Файл слишком большой (макс. 5 МБ)")
+    data = _process_image(data, file.content_type)
     ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}.get(file.content_type, "jpg")
     filename = f"{uuid.uuid4().hex}.{ext}"
     (UPLOADS_DIR / filename).write_bytes(data)
@@ -181,6 +215,7 @@ async def add_product_photo(product_id: int, file: UploadFile = File(...), db: A
     data = await file.read()
     if len(data) > MAX_IMAGE_SIZE:
         raise HTTPException(status_code=413, detail="Файл слишком большой (макс. 5 МБ)")
+    data = _process_image(data, file.content_type)
     ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}.get(file.content_type, "jpg")
     filename = f"{uuid.uuid4().hex}.{ext}"
     (UPLOADS_DIR / filename).write_bytes(data)
