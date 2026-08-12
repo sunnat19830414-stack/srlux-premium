@@ -62,7 +62,7 @@ const RU = {
   outOfStockShort: 'Нет',
   modelsCount: 'Моделей',
   footerTagline: 'Premium системы отопления и климат-контроля. Официальный дистрибьютор в Узбекистане.',
-  footerAddress: 'г. Ташкент, ул. Уста Ширин 111D',
+  footerAddress: 'Рынок «Строй мир», ул. Уста Ширин, Ташкент, 100057',
   footerHours: 'Пн–Сб 9:00–18:00',
 }
 
@@ -126,7 +126,7 @@ const UZ: typeof RU = {
   outOfStockShort: 'Yo\'q',
   modelsCount: 'Modellar',
   footerTagline: 'Premium isitish va iqlim-nazorat tizimlari. O\'zbekistondagi rasmiy distribyutor.',
-  footerAddress: "Toshkent sh., Usta Shirin ko'chasi 111D",
+  footerAddress: "«Stroy Mir» bozori, Usta Shirin ko'chasi, Toshkent, 100057",
   footerHours: 'Du–Shanba 9:00–18:00',
 }
 

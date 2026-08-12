@@ -77,8 +77,10 @@ export function organizationJsonLd() {
     description: 'Официальный дистрибьютор систем отопления и климат-контроля в Узбекистане.',
     address: {
       '@type': 'PostalAddress',
-      streetAddress: 'ул. Уста Ширин 111D',
+      streetAddress: 'Рынок «Строй мир», ул. Уста Ширин',
       addressLocality: 'Ташкент',
+      addressRegion: 'Ташкент',
+      postalCode: '100057',
       addressCountry: 'UZ',
     },
     telephone: '+998951854797',
