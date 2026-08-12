@@ -72,7 +72,7 @@ async def get_product_by_slug(db: AsyncSession, slug: str):
     result = await db.execute(
         select(Product)
         .where(Product.slug == slug, Product.is_active == True)
-        .options(selectinload(Product.category), selectinload(Product.variants))
+        .options(selectinload(Product.category), selectinload(Product.variants), selectinload(Product.images))
     )
     return result.scalar_one_or_none()
 
@@ -767,7 +767,7 @@ async def admin_list_products(
     }.get(sort_by, Product.id)
     order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
 
-    q = select(Product).order_by(order)
+    q = select(Product).options(selectinload(Product.images)).order_by(order)
     if search:
         q = q.where(Product.name_ru.ilike(f"%{search}%") | Product.sku.ilike(f"%{search}%"))
     if is_active is not None:
@@ -781,14 +781,116 @@ async def admin_list_products(
 
 
 async def admin_update_product(db: AsyncSession, product_id: int, updates: dict):
-    product = await db.scalar(select(Product).where(Product.id == product_id))
+    product = await db.scalar(
+        select(Product).options(selectinload(Product.images)).where(Product.id == product_id)
+    )
     if not product:
         return None
     for key, value in updates.items():
         setattr(product, key, value)
     await db.commit()
+    # commit() expires every attribute on the object (including relationships
+    # that were selectinload'd above) — refresh() only reloads the plain
+    # columns unless a relationship is explicitly named too, so both calls
+    # are needed or `images` would trigger an unawaited lazy-load later
+    # during response serialization.
     await db.refresh(product)
+    await db.refresh(product, attribute_names=["images"])
     return product
+
+
+async def admin_create_product(db: AsyncSession, data: dict):
+    """Manually-added product (dolibarr_id left NULL) — for items sourced
+    ad-hoc from other suppliers that don't live in Dolibarr at all. Since the
+    ERP sync only ever touches rows it recognises by dolibarr_id/sku, a NULL
+    dolibarr_id row is permanently outside its reach and safe from being
+    overwritten or hidden by a future sync pass. Returns None on a duplicate
+    SKU so the router can turn that into a 409 instead of a raw DB error."""
+    existing = await db.scalar(select(Product).where(Product.sku == data["sku"]))
+    if existing:
+        return None
+    slug = _slugify(data["name_ru"])
+    slug = await _unique_slug(db, Product, slug)
+    product = Product(
+        dolibarr_id=None,
+        sku=data["sku"],
+        slug=slug,
+        name_ru=data["name_ru"],
+        name_uz=data.get("name_uz"),
+        description_ru=data.get("description_ru"),
+        description_uz=data.get("description_uz"),
+        price_uzs=data["price_uzs"],
+        stock=data.get("stock", 0),
+        category_id=data.get("category_id"),
+        is_active=data.get("is_active", True),
+    )
+    db.add(product)
+    await db.commit()
+    await db.refresh(product)
+    await db.refresh(product, attribute_names=["images"])
+    return product
+
+
+# ── Admin: product photo gallery ────────────────────────────────────────────────
+
+async def add_product_photo(db: AsyncSession, product_id: int, image_url: str):
+    """Appends a gallery photo and, per the image_manual convention already
+    used by the single-cover endpoint, marks the product's photos as
+    manually managed so the Dolibarr sync (which otherwise mirrors its own
+    document list onto Product.images wholesale) never overwrites them."""
+    max_sort = await db.scalar(
+        text("SELECT COALESCE(MAX(sort_order), -1) FROM product_images WHERE product_id = :pid"),
+        {"pid": product_id},
+    )
+    photo = ProductImage(product_id=product_id, image_url=image_url, sort_order=max_sort + 1)
+    db.add(photo)
+    product = await db.get(Product, product_id)
+    if product:
+        product.image_manual = True
+        if not product.image_url:
+            product.image_url = image_url
+    await db.commit()
+    await db.refresh(photo)
+    return photo
+
+
+async def set_product_photo_primary(db: AsyncSession, photo_id: int):
+    photo = await db.get(ProductImage, photo_id)
+    if not photo:
+        return None
+    others = (await db.execute(
+        select(ProductImage)
+        .where(ProductImage.product_id == photo.product_id, ProductImage.id != photo_id)
+        .order_by(ProductImage.sort_order)
+    )).scalars().all()
+    photo.sort_order = 0
+    for i, other in enumerate(others, start=1):
+        other.sort_order = i
+    product = await db.get(Product, photo.product_id)
+    if product:
+        product.image_url = photo.image_url
+        product.image_manual = True
+    await db.commit()
+    return photo
+
+
+async def delete_product_photo(db: AsyncSession, photo_id: int) -> bool:
+    photo = await db.get(ProductImage, photo_id)
+    if not photo:
+        return False
+    product = await db.get(Product, photo.product_id)
+    was_cover = bool(product and product.image_url == photo.image_url)
+    await db.delete(photo)
+    await db.flush()
+    if was_cover and product:
+        product.image_url = await db.scalar(
+            select(ProductImage.image_url)
+            .where(ProductImage.product_id == photo.product_id)
+            .order_by(ProductImage.sort_order)
+            .limit(1)
+        )
+    await db.commit()
+    return True
 
 
 # ── Admin: categories ──────────────────────────────────────────────────────────

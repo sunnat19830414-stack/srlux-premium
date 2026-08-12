@@ -1,7 +1,15 @@
-import { ArrowUpDown, Camera, ChevronDown, ChevronUp, Check, ImageOff, Pencil, Star, X } from 'lucide-react'
+import { ArrowUpDown, Camera, ChevronDown, ChevronUp, Check, ImageOff, Loader2, Pencil, Plus, Star, Trash2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { AdminCategory, AdminProduct, AdminProductList } from '../../api/adminClient'
-import { adminGetCategories, adminGetProducts, adminUpdateProduct, adminUploadProductImage } from '../../api/adminClient'
+import {
+  adminAddProductPhoto,
+  adminCreateProduct,
+  adminDeleteProductPhoto,
+  adminGetCategories,
+  adminGetProducts,
+  adminSetProductPhotoPrimary,
+  adminUpdateProduct,
+} from '../../api/adminClient'
 import { useToast } from '../../contexts/ToastContext'
 
 const fmt = (n: number) => new Intl.NumberFormat('ru-RU').format(Math.round(n))
@@ -73,59 +81,245 @@ function InlineCategorySelect({ categoryId, categories, onSave }: {
   )
 }
 
-function PhotoCell({ product, onUploaded }: { product: AdminProduct; onUploaded: () => void }) {
+function ProductPhotoModal({ product, onClose, onChanged }: {
+  product: AdminProduct
+  onClose: () => void
+  onChanged: () => void
+}) {
   const { toast } = useToast()
   const inputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
 
   const handleFile = async (file: File) => {
     if (!file.type.startsWith('image/')) { toast('Только изображения', 'error'); return }
     if (file.size > 5 * 1024 * 1024) { toast('Файл слишком большой (макс. 5 МБ)', 'error'); return }
-    setPreviewUrl(URL.createObjectURL(file))
     setUploading(true)
     try {
-      await adminUploadProductImage(product.id, file)
-      toast('Фото загружено')
-      onUploaded()
+      await adminAddProductPhoto(product.id, file)
+      toast('Фото добавлено')
+      onChanged()
     } catch {
       toast('Ошибка загрузки фото', 'error')
-      setPreviewUrl(null)
     } finally {
       setUploading(false)
     }
   }
 
-  const displayUrl = previewUrl || product.image_url
+  const makePrimary = async (photoId: number) => {
+    try { await adminSetProductPhotoPrimary(photoId); toast('Обложка обновлена'); onChanged() }
+    catch { toast('Ошибка', 'error') }
+  }
+  const removePhoto = async (photoId: number) => {
+    try { await adminDeleteProductPhoto(photoId); toast('Фото удалено'); onChanged() }
+    catch { toast('Ошибка', 'error') }
+  }
 
   return (
-    <div className="relative group w-9 h-9">
-      {displayUrl ? (
-        <img src={displayUrl} alt="" className="w-9 h-9 object-contain rounded-lg bg-gray-800"
-          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
-      ) : (
-        <div className="w-9 h-9 flex items-center justify-center rounded-lg bg-gray-800">
-          <ImageOff size={14} className="text-gray-700" />
-        </div>
-      )}
-      {/* Upload overlay on hover */}
-      <button
-        onClick={() => inputRef.current?.click()}
-        disabled={uploading}
-        className={`absolute inset-0 flex items-center justify-center rounded-lg transition-all ${
-          uploading
-            ? 'bg-gray-900/70'
-            : 'bg-gray-900/0 group-hover:bg-gray-900/70 opacity-0 group-hover:opacity-100'
-        }`}
-        title="Загрузить фото"
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" onClick={onClose}>
+      <div
+        className="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-md p-6"
+        onClick={(e) => e.stopPropagation()}
       >
-        {uploading
-          ? <div className="w-3 h-3 border border-amber-400 border-t-transparent rounded-full animate-spin" />
-          : <Camera size={13} className="text-amber-400" />
-        }
+        <div className="flex items-center justify-between mb-4 gap-3">
+          <h2 className="text-base font-bold text-white truncate">{product.name_ru}</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-white shrink-0"><X size={18} /></button>
+        </div>
+
+        {product.images.length === 0 ? (
+          <p className="text-gray-600 text-sm text-center py-8">Фото ещё нет</p>
+        ) : (
+          <div className="grid grid-cols-4 gap-2 mb-4">
+            {product.images.map((p) => (
+              <div key={p.id} className="relative group aspect-square">
+                <img src={p.image_url} alt="" className="w-full h-full object-cover rounded-lg bg-gray-800" />
+                {p.sort_order === 0 && (
+                  <span className="absolute top-1 left-1 bg-amber-500 text-black text-[9px] font-bold px-1 py-0.5 rounded">
+                    обложка
+                  </span>
+                )}
+                <div className="absolute inset-0 hidden group-hover:flex bg-gray-900/80 rounded-lg items-center justify-center gap-2">
+                  {p.sort_order !== 0 && (
+                    <button onClick={() => makePrimary(p.id)} title="Сделать обложкой" className="text-amber-400 hover:text-amber-300">
+                      <Star size={15} />
+                    </button>
+                  )}
+                  <button onClick={() => removePhoto(p.id)} title="Удалить" className="text-red-400 hover:text-red-300">
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button
+          onClick={() => inputRef.current?.click()}
+          disabled={uploading}
+          className="w-full flex items-center justify-center gap-2 border border-dashed border-gray-700 hover:border-amber-500/50 rounded-lg px-3 py-2.5 text-sm text-gray-400 hover:text-amber-400 transition-colors disabled:opacity-50"
+        >
+          {uploading ? <Loader2 size={15} className="animate-spin" /> : <Camera size={15} />}
+          {uploading ? 'Загружаю…' : 'Добавить фото'}
+        </button>
+        <input ref={inputRef} type="file" accept="image/*" className="hidden"
+          onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
+      </div>
+    </div>
+  )
+}
+
+function PhotoCell({ product, onChanged }: { product: AdminProduct; onChanged: () => void }) {
+  const [open, setOpen] = useState(false)
+  const count = product.images.length
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)} className="relative group w-9 h-9">
+        {product.image_url ? (
+          <img src={product.image_url} alt="" className="w-9 h-9 object-contain rounded-lg bg-gray-800"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+        ) : (
+          <div className="w-9 h-9 flex items-center justify-center rounded-lg bg-gray-800">
+            <ImageOff size={14} className="text-gray-700" />
+          </div>
+        )}
+        <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-gray-900/0 group-hover:bg-gray-900/70 opacity-0 group-hover:opacity-100 transition-all">
+          <Camera size={13} className="text-amber-400" />
+        </div>
+        {count > 1 && (
+          <span className="absolute -top-1.5 -right-1.5 bg-amber-500 text-black text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+            {count}
+          </span>
+        )}
       </button>
-      <input ref={inputRef} type="file" accept="image/*" className="hidden"
-        onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
+      {open && <ProductPhotoModal product={product} onClose={() => setOpen(false)} onChanged={onChanged} />}
+    </>
+  )
+}
+
+function AddProductModal({ categories, onClose, onCreated }: {
+  categories: AdminCategory[]
+  onClose: () => void
+  onCreated: () => void
+}) {
+  const { toast } = useToast()
+  const [sku, setSku] = useState('')
+  const [nameRu, setNameRu] = useState('')
+  const [nameUz, setNameUz] = useState('')
+  const [descriptionRu, setDescriptionRu] = useState('')
+  const [descriptionUz, setDescriptionUz] = useState('')
+  const [priceUzs, setPriceUzs] = useState('')
+  const [stock, setStock] = useState('0')
+  const [categoryId, setCategoryId] = useState<number | ''>('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const valid = sku.trim() && nameRu.trim() && Number(priceUzs) > 0
+
+  const submit = async () => {
+    if (!valid) return
+    setSaving(true)
+    setError('')
+    try {
+      await adminCreateProduct({
+        sku: sku.trim(),
+        name_ru: nameRu.trim(),
+        name_uz: nameUz.trim() || undefined,
+        description_ru: descriptionRu.trim() || undefined,
+        description_uz: descriptionUz.trim() || undefined,
+        price_uzs: Number(priceUzs),
+        stock: Number(stock) || 0,
+        category_id: categoryId === '' ? undefined : categoryId,
+      })
+      toast('Товар добавлен')
+      onCreated()
+      onClose()
+    } catch (e) {
+      const status = (e as { response?: { status?: number } })?.response?.status
+      setError(status === 409 ? 'Товар с таким SKU уже существует' : 'Не удалось создать товар')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" onClick={onClose}>
+      <div
+        className="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-lg p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-bold text-white">Добавить товар вручную</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-white"><X size={18} /></button>
+        </div>
+        <p className="text-xs text-gray-500 mb-5">
+          Для товаров от других поставщиков, которых нет в Dolibarr. Такой товар синк не тронет и не перезапишет.
+        </p>
+
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">SKU / артикул *</label>
+              <input value={sku} onChange={(e) => setSku(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Категория</label>
+              <select value={categoryId} onChange={(e) => setCategoryId(e.target.value === '' ? '' : Number(e.target.value))}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500">
+                <option value="">— нет —</option>
+                {categories.map((c) => <option key={c.id} value={c.id}>{c.name_ru}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Название (рус.) *</label>
+            <input value={nameRu} onChange={(e) => setNameRu(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500" />
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Название (узб., необязательно)</label>
+            <input value={nameUz} onChange={(e) => setNameUz(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Цена, сум *</label>
+              <input type="number" value={priceUzs} onChange={(e) => setPriceUzs(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Остаток</label>
+              <input type="number" value={stock} onChange={(e) => setStock(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Описание рус. (необязательно)</label>
+            <textarea value={descriptionRu} onChange={(e) => setDescriptionRu(e.target.value)} rows={3}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 resize-none" />
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Описание узб. (необязательно)</label>
+            <textarea value={descriptionUz} onChange={(e) => setDescriptionUz(e.target.value)} rows={3}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 resize-none" />
+          </div>
+
+          {error && <p className="text-red-400 text-xs">{error}</p>}
+
+          <button
+            onClick={submit}
+            disabled={!valid || saving}
+            className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-black font-semibold text-sm transition-colors"
+          >
+            {saving ? 'Сохраняю…' : 'Добавить товар'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -144,6 +338,7 @@ export default function AdminProducts() {
   const [sortBy, setSortBy] = useState<SortField>('id')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [showAddModal, setShowAddModal] = useState(false)
 
   useEffect(() => {
     adminGetCategories().then((r) => setCategories(r.data)).catch(() => {})
@@ -244,6 +439,13 @@ export default function AdminProducts() {
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <h1 className="text-xl font-bold text-white">Товары</h1>
 
+        <button
+          onClick={() => setShowAddModal(true)}
+          className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-black text-sm font-semibold px-3 py-2 rounded-xl transition-colors"
+        >
+          <Plus size={15} /> Добавить товар
+        </button>
+
         <input type="text" placeholder="Поиск по названию или SKU..."
           value={searchInput} onChange={(e) => setSearchInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { setSearch(searchInput); setPage(1) } }}
@@ -339,7 +541,7 @@ export default function AdminProducts() {
                   )}
                   {/* Photo with upload */}
                   <td className="px-2 py-2">
-                    <PhotoCell product={p} onUploaded={load} />
+                    <PhotoCell product={p} onChanged={load} />
                   </td>
                   <td className="px-4 py-2 font-mono text-xs text-gray-500 whitespace-nowrap">{p.sku}</td>
                   <td className="px-4 py-2 text-white max-w-xs">
@@ -393,6 +595,14 @@ export default function AdminProducts() {
       <p className="text-gray-700 text-xs mt-2">
         Наведите на фото — загрузить · Нажмите на название/цену/категорию — редактировать · <Star size={10} className="inline" /> — рекомендуемый
       </p>
+
+      {showAddModal && (
+        <AddProductModal
+          categories={categories}
+          onClose={() => setShowAddModal(false)}
+          onCreated={load}
+        />
+      )}
     </div>
   )
 }

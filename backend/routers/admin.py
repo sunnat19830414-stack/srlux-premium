@@ -33,6 +33,8 @@ from schemas import (
     CurrencyOut,
     CurrencyUpdateIn,
     OrderStatusUpdate,
+    ProductCreateIn,
+    ProductPhotoOut,
     ProductUpdateIn,
     SyncStatusOut,
 )
@@ -133,6 +135,15 @@ async def list_products_admin(
     return AdminProductListOut(total=total, page=page, limit=limit, products=products)
 
 
+@router.post("/products", response_model=AdminProductOut, status_code=201, dependencies=[Depends(_require_api_key)])
+async def create_product(data: ProductCreateIn, db: AsyncSession = Depends(get_db)):
+    product = await crud.admin_create_product(db, data.model_dump())
+    if not product:
+        raise HTTPException(status_code=409, detail="Товар с таким SKU уже существует")
+    logger.info("Product created manually: %s (%s)", product.sku, product.name_ru)
+    return product
+
+
 @router.patch("/products/{product_id}", response_model=AdminProductOut, dependencies=[Depends(_require_api_key)])
 async def update_product(product_id: int, data: ProductUpdateIn, db: AsyncSession = Depends(get_db)):
     updates = {k: v for k, v in data.model_dump().items() if v is not None}
@@ -159,6 +170,39 @@ async def upload_product_image(product_id: int, file: UploadFile = File(...), db
         raise HTTPException(status_code=404, detail="Product not found")
     logger.info("Product %d image uploaded: %s", product_id, filename)
     return product
+
+
+# ── Admin panel: product photo gallery (multiple photos per product) ───────────
+
+@router.post("/products/{product_id}/images", response_model=ProductPhotoOut, dependencies=[Depends(_require_api_key)])
+async def add_product_photo(product_id: int, file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail="Разрешены только изображения (JPEG, PNG, WebP, GIF)")
+    data = await file.read()
+    if len(data) > MAX_IMAGE_SIZE:
+        raise HTTPException(status_code=413, detail="Файл слишком большой (макс. 5 МБ)")
+    ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}.get(file.content_type, "jpg")
+    filename = f"{uuid.uuid4().hex}.{ext}"
+    (UPLOADS_DIR / filename).write_bytes(data)
+    photo = await crud.add_product_photo(db, product_id, f"/static/uploads/{filename}")
+    logger.info("Product %d gallery photo added: %s", product_id, filename)
+    return photo
+
+
+@router.patch("/products/images/{photo_id}/primary", response_model=ProductPhotoOut, dependencies=[Depends(_require_api_key)])
+async def set_product_photo_primary(photo_id: int, db: AsyncSession = Depends(get_db)):
+    photo = await crud.set_product_photo_primary(db, photo_id)
+    if not photo:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return photo
+
+
+@router.delete("/products/images/{photo_id}", dependencies=[Depends(_require_api_key)])
+async def delete_product_photo(photo_id: int, db: AsyncSession = Depends(get_db)):
+    ok = await crud.delete_product_photo(db, photo_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return {"ok": True}
 
 
 # ── Admin panel: categories ────────────────────────────────────────────────────

@@ -91,6 +91,13 @@ export interface AdminOrderList {
   counts: OrderStatusCounts
 }
 
+export interface ProductPhoto {
+  id: number
+  product_id: number
+  image_url: string
+  sort_order: number
+}
+
 export interface AdminProduct {
   id: number
   sku: string
@@ -101,6 +108,7 @@ export interface AdminProduct {
   is_featured: boolean
   sort_order: number
   image_url: string | null
+  images: ProductPhoto[]
   category_id: number | null
   parent_model: string | null
   color: string | null
@@ -192,6 +200,20 @@ export const adminUploadProductImage = (id: number, file: File) => {
   })
 }
 
+export const adminAddProductPhoto = (id: number, file: File) => {
+  const form = new FormData()
+  form.append('file', file)
+  return adminApi.post<ProductPhoto>(`/api/admin/products/${id}/images`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+export const adminSetProductPhotoPrimary = (photoId: number) =>
+  adminApi.patch<ProductPhoto>(`/api/admin/products/images/${photoId}/primary`)
+
+export const adminDeleteProductPhoto = (photoId: number) =>
+  adminApi.delete(`/api/admin/products/images/${photoId}`)
+
 export const adminGetProducts = (params: {
   page?: number; limit?: number; search?: string
   is_active?: boolean; category_id?: number
@@ -200,6 +222,21 @@ export const adminGetProducts = (params: {
 
 export const adminUpdateProduct = (id: number, data: Partial<AdminProduct>) =>
   adminApi.patch<AdminProduct>(`/api/admin/products/${id}`, data)
+
+export interface ProductCreatePayload {
+  sku: string
+  name_ru: string
+  name_uz?: string
+  description_ru?: string
+  description_uz?: string
+  price_uzs: number
+  stock?: number
+  category_id?: number | null
+  is_active?: boolean
+}
+
+export const adminCreateProduct = (data: ProductCreatePayload) =>
+  adminApi.post<AdminProduct>('/api/admin/products', data)
 
 export const adminGetCategories = () =>
   adminApi.get<AdminCategory[]>('/api/admin/categories-list')

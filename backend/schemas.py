@@ -47,8 +47,18 @@ class ProductOut(BaseModel):
     stock: int
     weight: Optional[float]
     image_url: Optional[str]
+    images: List[str] = []
     category: Optional[CategoryOut]
     variants: List[VariantOut] = []
+
+    @field_validator("images", mode="before")
+    @classmethod
+    def _image_urls(cls, v):
+        """Accepts either the raw ProductImage ORM relationship (from_attributes
+        path) or an already-plain list of URL strings."""
+        if v and not isinstance(v[0], str):
+            return [img.image_url for img in v]
+        return v or []
 
 
 class ProductListOut(BaseModel):
@@ -286,6 +296,15 @@ class OrderStatusUpdate(BaseModel):
     status: str = Field(..., pattern="^(pending|processing|completed|cancelled)$")
 
 
+class ProductPhotoOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    product_id: int
+    image_url: str
+    sort_order: int
+
+
 class AdminProductOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -297,6 +316,7 @@ class AdminProductOut(BaseModel):
     is_featured: bool = False
     sort_order: int = 0
     image_url: Optional[str]
+    images: List[ProductPhotoOut] = []
     category_id: Optional[int]
     parent_model: Optional[str]
     color: Optional[str]
@@ -307,6 +327,18 @@ class AdminProductListOut(BaseModel):
     page: int
     limit: int
     products: List[AdminProductOut]
+
+
+class ProductCreateIn(BaseModel):
+    sku: str = Field(..., min_length=1, max_length=200)
+    name_ru: str = Field(..., min_length=1, max_length=500)
+    name_uz: Optional[str] = Field(None, max_length=500)
+    description_ru: Optional[str] = Field(None, max_length=10000)
+    description_uz: Optional[str] = Field(None, max_length=10000)
+    price_uzs: Decimal = Field(..., gt=0)
+    stock: int = Field(0, ge=0)
+    category_id: Optional[int] = Field(None, gt=0)
+    is_active: bool = True
 
 
 class ProductUpdateIn(BaseModel):
