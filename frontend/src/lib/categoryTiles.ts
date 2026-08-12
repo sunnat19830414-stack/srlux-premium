@@ -14,7 +14,10 @@ import type { Category, ModelCard } from '../api/client'
 // One tile for the whole root (not one per subcategory), per product
 // decision — same pattern as "Радиаторы" already being one tile covering
 // its Вертикальные/Горизонтальные sub-branches.
-export const FEATURED_CATEGORY_IDS = [1, 16, 12, 20, 13, 15, 60]
+//
+// 64 = «Конвекторы» — manually-created category (dolibarr_id NULL, not from
+// any sync), same one-tile-per-root treatment as «Трап».
+export const FEATURED_CATEGORY_IDS = [1, 16, 12, 20, 13, 15, 60, 64]
 
 // Auto-picking "whichever model happens to sit directly on this root
 // category" landed on an accessory (a radiator fan) for Запорная
