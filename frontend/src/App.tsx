@@ -7,15 +7,22 @@ import Footer from './components/Footer'
 import Header from './components/Header'
 import { LocaleProvider } from './contexts/LocaleContext'
 import { CurrencyProvider } from './contexts/CurrencyContext'
-import AboutPage from './pages/AboutPage'
-import CartPage from './pages/CartPage'
-import CatalogPage from './pages/CatalogPage'
 import HomePage from './pages/HomePage'
-import ContactsPage from './pages/ContactsPage'
-import DeliveryPage from './pages/DeliveryPage'
-import ReturnsPage from './pages/ReturnsPage'
-import ModelPage from './pages/ModelPage'
-import ProductPage from './pages/ProductPage'
+
+// Homepage stays eager (it's the page most first-time visits land on, and
+// the one PageSpeed/most ad traffic actually tests -- no benefit to
+// splitting it out, only a delay). Every other public page is its own
+// chunk, same reasoning as the admin panel below: someone landing on /
+// or a single /model/<code> page shouldn't also download catalog, cart,
+// and every static page's code up front.
+const AboutPage = lazy(() => import('./pages/AboutPage'))
+const CartPage = lazy(() => import('./pages/CartPage'))
+const CatalogPage = lazy(() => import('./pages/CatalogPage'))
+const ContactsPage = lazy(() => import('./pages/ContactsPage'))
+const DeliveryPage = lazy(() => import('./pages/DeliveryPage'))
+const ReturnsPage = lazy(() => import('./pages/ReturnsPage'))
+const ModelPage = lazy(() => import('./pages/ModelPage'))
+const ProductPage = lazy(() => import('./pages/ProductPage'))
 
 // Admin panel is staff-only and a sizeable chunk of JS on its own -- lazy
 // loading it means public-site visitors (the vast majority of traffic)
@@ -116,26 +123,28 @@ export default function App() {
               <div className="min-h-screen flex flex-col bg-anthracite-900 text-white font-sans">
                 <Header cartCount={cartCount} />
                 <main className="flex-1">
-                  <Routes>
-                    <Route path="/" element={<HomePage cartCount={cartCount} />} />
-                    <Route path="/catalog" element={<CatalogPage />} />
-                    <Route path="/catalog/:slug" element={<CatalogPage />} />
-                    <Route path="/model/:code" element={<ModelPage onAddToCart={addToCart} />} />
-                    <Route path="/product/:slug" element={<ProductPage onAddToCart={addToCart} />} />
-                    <Route
-                      path="/cart"
-                      element={
-                        <CartPage
-                          items={cartItems}
-                          onCartChange={(items) => { setCartItems(items); saveCart(items) }}
-                        />
-                      }
-                    />
-                    <Route path="/about" element={<AboutPage />} />
-                    <Route path="/contacts" element={<ContactsPage />} />
-                    <Route path="/delivery" element={<DeliveryPage />} />
-                    <Route path="/returns" element={<ReturnsPage />} />
-                  </Routes>
+                  <Suspense fallback={<div className="min-h-[60vh]" />}>
+                    <Routes>
+                      <Route path="/" element={<HomePage cartCount={cartCount} />} />
+                      <Route path="/catalog" element={<CatalogPage />} />
+                      <Route path="/catalog/:slug" element={<CatalogPage />} />
+                      <Route path="/model/:code" element={<ModelPage onAddToCart={addToCart} />} />
+                      <Route path="/product/:slug" element={<ProductPage onAddToCart={addToCart} />} />
+                      <Route
+                        path="/cart"
+                        element={
+                          <CartPage
+                            items={cartItems}
+                            onCartChange={(items) => { setCartItems(items); saveCart(items) }}
+                          />
+                        }
+                      />
+                      <Route path="/about" element={<AboutPage />} />
+                      <Route path="/contacts" element={<ContactsPage />} />
+                      <Route path="/delivery" element={<DeliveryPage />} />
+                      <Route path="/returns" element={<ReturnsPage />} />
+                    </Routes>
+                  </Suspense>
                 </main>
                 <Footer />
                 <FloatingWhatsApp />
