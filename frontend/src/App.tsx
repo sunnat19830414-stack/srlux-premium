@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import type { Product, Variant } from './api/client'
 import FloatingWhatsApp from './components/FloatingWhatsApp'
@@ -16,15 +16,20 @@ import DeliveryPage from './pages/DeliveryPage'
 import ReturnsPage from './pages/ReturnsPage'
 import ModelPage from './pages/ModelPage'
 import ProductPage from './pages/ProductPage'
-import AdminLayout from './pages/admin/AdminLayout'
-import AdminLogin from './pages/admin/AdminLogin'
-import AdminCategories from './pages/admin/AdminCategories'
-import AdminOrderDetail from './pages/admin/AdminOrderDetail'
-import AdminOrders from './pages/admin/AdminOrders'
-import AdminProducts from './pages/admin/AdminProducts'
-import AdminCatalog from './pages/admin/AdminCatalog'
-import AdminStats from './pages/admin/AdminStats'
-import AdminSync from './pages/admin/AdminSync'
+
+// Admin panel is staff-only and a sizeable chunk of JS on its own -- lazy
+// loading it means public-site visitors (the vast majority of traffic)
+// never download admin code at all. Each import becomes its own chunk,
+// fetched only when a visitor actually navigates to /admin/*.
+const AdminLayout = lazy(() => import('./pages/admin/AdminLayout'))
+const AdminLogin = lazy(() => import('./pages/admin/AdminLogin'))
+const AdminCategories = lazy(() => import('./pages/admin/AdminCategories'))
+const AdminOrderDetail = lazy(() => import('./pages/admin/AdminOrderDetail'))
+const AdminOrders = lazy(() => import('./pages/admin/AdminOrders'))
+const AdminProducts = lazy(() => import('./pages/admin/AdminProducts'))
+const AdminCatalog = lazy(() => import('./pages/admin/AdminCatalog'))
+const AdminStats = lazy(() => import('./pages/admin/AdminStats'))
+const AdminSync = lazy(() => import('./pages/admin/AdminSync'))
 
 interface CartItem extends Product {
   variant: Variant | null
@@ -82,9 +87,18 @@ export default function App() {
       <BrowserRouter>
         <ScrollToTop />
         <Routes>
-          {/* Admin panel — separate layout, no header/footer */}
-          <Route path="/admin/login" element={<AdminLogin />} />
-          <Route path="/admin" element={<AdminLayout />}>
+          {/* Admin panel — separate layout, no header/footer. Lazy-loaded
+              (see imports above), so it needs its own Suspense boundary;
+              a blank frame during the chunk fetch is fine here since this
+              is staff-only, not a customer-facing page. */}
+          <Route
+            path="/admin/login"
+            element={<Suspense fallback={null}><AdminLogin /></Suspense>}
+          />
+          <Route
+            path="/admin"
+            element={<Suspense fallback={null}><AdminLayout /></Suspense>}
+          >
             <Route index element={<Navigate to="orders" replace />} />
             <Route path="orders" element={<AdminOrders />} />
             <Route path="orders/:id" element={<AdminOrderDetail />} />
