@@ -53,7 +53,7 @@ export const TILE_IMAGE_OVERRIDE: Record<number, string> = {
   46: '/static/uploads/dol_2276.jpg',
   // Плоские 68×12 (JD6812)
   47: '/static/uploads/dol_2291_2a3b7ad0bd.jpg',
-  48: '/static/uploads/dol_2301.jpg',
+  48: '/static/uploads/dol_2301_5fea0d5766.jpg',
   // Стальной панельный (JDC22)
   49: '/static/uploads/dol_2385_tile.webp',
   50: '/static/uploads/dol_2539_645c1f9de4.jpg',
