@@ -985,6 +985,7 @@ def sync_entity2(usd_rate: Decimal) -> None:
 SITE_URL = "https://srlux.uz"
 SNAPSHOT_DIR = Path(os.getenv("SNAPSHOT_DIR", "/app/uploads/model-snapshots"))
 STATIC_SNAPSHOT_DIR = Path(os.getenv("STATIC_SNAPSHOT_DIR", "/app/uploads/static-snapshots"))
+CATEGORY_SNAPSHOT_DIR = Path(os.getenv("CATEGORY_SNAPSHOT_DIR", "/app/uploads/category-snapshots"))
 
 # Same fallback used by frontend/src/lib/seo.ts's absoluteUrl()
 def _abs_url(path_or_url):
@@ -1154,6 +1155,74 @@ def generate_model_snapshots():
     logger.info(f"SEO-снапшоты моделей: {len(written)} сгенерировано, {stale} устаревших удалено.")
 
 
+def generate_category_snapshots():
+    """Static-SEO snapshot for every /catalog?cat=<id> page.
+
+    Same pattern as generate_model_snapshots(): the SPA sets <link
+    rel="canonical"> client-side only, so Googlebot's initial (unrendered)
+    fetch of /catalog?cat=<id> was seeing index.html's hardcoded canonical
+    (the homepage URL) instead of the category's own URL — Search Console
+    flagged this as "Alternate page with proper canonical tag" for all
+    catalog pages (see fix commit for details). Query-string routes can't
+    be matched by nginx `location` on path alone, so this writes one file
+    per category id and nginx selects it via $arg_cat.
+    """
+    template = _fetch_template()
+    if template is None:
+        logger.warning("Пропускаю генерацию SEO-снапшотов категорий (нет шаблона).")
+        return
+
+    try:
+        resp = requests.get(f"{BACKEND_URL}/api/categories", timeout=15)
+        resp.raise_for_status()
+        categories = resp.json()
+    except Exception as e:
+        logger.error(f"Не удалось получить список категорий для SEO-снапшотов: {e}")
+        return
+
+    CATEGORY_SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    written = set()
+
+    for cat in categories:
+        try:
+            cat_id = cat["id"]
+            name = cat["name_ru"]
+            title = f"{name} — купить в Ташкенте | SR Lux"
+            description = (
+                f"{name} в каталоге SR Lux — купить в Ташкенте. "
+                "Официальный дистрибьютор систем отопления и климат-контроля в Узбекистане."
+            )
+            html_out = _patch_head_html(
+                template,
+                title=title,
+                description=description,
+                path=f"/catalog?cat={cat_id}",
+                image=None,
+                jsonld=None,
+            )
+            (CATEGORY_SNAPSHOT_DIR / f"{cat_id}.html").write_text(html_out, encoding="utf-8")
+            written.add(f"{cat_id}.html")
+        except Exception as e:
+            logger.warning(f"SEO-снапшот для категории {cat.get('id')} не сгенерирован: {e}")
+
+    # Same guarded-prune pattern as generate_model_snapshots(): only remove
+    # files for categories that no longer exist once we're confident this
+    # run actually saw most of the category list (not a partial failure).
+    stale = 0
+    if categories and len(written) >= max(1, len(categories) // 2):
+        for f in CATEGORY_SNAPSHOT_DIR.glob("*.html"):
+            if f.name not in written:
+                f.unlink()
+                stale += 1
+    elif categories:
+        logger.warning(
+            f"Пропускаю очистку устаревших снапшотов категорий: успешно сгенерировано только "
+            f"{len(written)} из {len(categories)}."
+        )
+
+    logger.info(f"SEO-снапшоты категорий: {len(written)} сгенерировано, {stale} устаревших удалено.")
+
+
 def generate_static_snapshots():
     """Static-SEO snapshot for the handful of static content pages."""
     template = _fetch_template()
@@ -1295,6 +1364,7 @@ def main():
     # не должно валить синк товаров, если недоступен фронтенд-контейнер и т.п.
     try:
         generate_model_snapshots()
+        generate_category_snapshots()
         generate_static_snapshots()
     except Exception as e:
         logger.error(f"Генерация SEO-снапшотов упала: {e}")
