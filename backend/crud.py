@@ -50,7 +50,7 @@ async def get_products(
     q = (
         select(Product)
         .where(Product.is_active == True)
-        .options(selectinload(Product.category), selectinload(Product.variants))
+        .options(selectinload(Product.category), selectinload(Product.variants), selectinload(Product.images))
         .order_by(Product.id)
     )
     if category_id:
