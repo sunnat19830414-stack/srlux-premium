@@ -77,6 +77,16 @@ def fetch_all_products() -> list:
                     "sortorder": "ASC",
                     "sortfield": "t.rowid",
                     "status": 1,  # только активные в Dolibarr
+                    # Without this, Dolibarr's list endpoint returns stock_reel
+                    # from a denormalized field on the product row that isn't
+                    # always kept in sync with real stock movements — null for
+                    # ~90 of 345 products, and numerically wrong (stale) for
+                    # ~66 more (confirmed 2026-08-19 by diffing against
+                    # /products/{id}?includestockdata=1, which computes the
+                    # real-time total from the stock movement ledger). This
+                    # was silently showing in-stock products as "нет в
+                    # наличии" on the site.
+                    "includestockdata": 1,
                 },
                 timeout=30,
             )
