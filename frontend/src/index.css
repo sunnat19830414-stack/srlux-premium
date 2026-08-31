@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body {
+    /* Defensive guard against a stray wide element forcing horizontal
+       scroll on mobile (real-device report: page didn't fit the screen,
+       had to pinch-zoom out). Doesn't affect any of the site's intentional
+       overflow-x-auto scroll strips (category carousels etc.) — those still
+       scroll internally, this only blocks the page itself from growing. */
+    overflow-x: hidden;
+  }
+
+  body {
+    background-color: #0a0a0a;
+    color: #ffffff;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #141414;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #3d3d3d;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #D4AF37;
+  }
+}
+
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
