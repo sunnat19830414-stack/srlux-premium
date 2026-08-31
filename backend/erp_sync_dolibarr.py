@@ -1166,16 +1166,25 @@ def generate_model_snapshots():
 
 
 def generate_category_snapshots():
-    """Static-SEO snapshot for every /catalog?cat=<id> page.
+    """Static-SEO snapshot for every /catalog?cat=<id> AND /catalog/<slug> page.
 
     Same pattern as generate_model_snapshots(): the SPA sets <link
     rel="canonical"> client-side only, so Googlebot's initial (unrendered)
-    fetch of /catalog?cat=<id> was seeing index.html's hardcoded canonical
-    (the homepage URL) instead of the category's own URL — Search Console
-    flagged this as "Alternate page with proper canonical tag" for all
-    catalog pages (see fix commit for details). Query-string routes can't
-    be matched by nginx `location` on path alone, so this writes one file
-    per category id and nginx selects it via $arg_cat.
+    fetch was seeing index.html's hardcoded canonical (the homepage URL)
+    instead of the category's own URL.
+
+    Two URL shapes exist for the same category and both get a snapshot
+    file, but they don't point at each other symmetrically:
+    - `{slug}.html`, served by nginx path-matching `/catalog/<slug>`
+      (mirrors /model/<code>) — self-canonicalizes to `/catalog/<slug>`.
+      This is the current, linked-from-the-site URL (see commit 3cb57e4).
+    - `{cat_id}.html`, served via the older `$arg_cat` query-string match
+      for the legacy `/catalog?cat=<id>` links nothing on the site emits
+      anymore but that Google indexed before the slug migration and still
+      recrawls — its canonical points at `/catalog/{slug}` (the new URL),
+      not at itself, so any residual SEO signal on the old link
+      consolidates onto the current one instead of keeping two indexed
+      duplicates alive.
     """
     template = _fetch_template()
     if template is None:
@@ -1196,21 +1205,36 @@ def generate_category_snapshots():
     for cat in categories:
         try:
             cat_id = cat["id"]
+            slug = cat["slug"]
             name = cat["name_ru"]
             title = f"{name} — купить в Ташкенте | SR Lux"
             description = (
                 f"{name} в каталоге SR Lux — купить в Ташкенте. "
                 "Официальный дистрибьютор систем отопления и климат-контроля в Узбекистане."
             )
-            html_out = _patch_head_html(
+
+            # Current URL — self-canonicalizing.
+            html_new = _patch_head_html(
                 template,
                 title=title,
                 description=description,
-                path=f"/catalog?cat={cat_id}",
+                path=f"/catalog/{slug}",
                 image=None,
                 jsonld=None,
             )
-            (CATEGORY_SNAPSHOT_DIR / f"{cat_id}.html").write_text(html_out, encoding="utf-8")
+            (CATEGORY_SNAPSHOT_DIR / f"{slug}.html").write_text(html_new, encoding="utf-8")
+            written.add(f"{slug}.html")
+
+            # Legacy query-string URL — canonicalizes to the current one.
+            html_legacy = _patch_head_html(
+                template,
+                title=title,
+                description=description,
+                path=f"/catalog/{slug}",
+                image=None,
+                jsonld=None,
+            )
+            (CATEGORY_SNAPSHOT_DIR / f"{cat_id}.html").write_text(html_legacy, encoding="utf-8")
             written.add(f"{cat_id}.html")
         except Exception as e:
             logger.warning(f"SEO-снапшот для категории {cat.get('id')} не сгенерирован: {e}")
