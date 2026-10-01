@@ -124,6 +124,7 @@ async def sitemap(db: AsyncSession = Depends(get_db)):
 async def merchant_feed(db: AsyncSession = Depends(get_db)):
     base = "https://srlux.uz"
     rows = await crud.get_model_cards(db)
+    extra_images = await crud.get_model_extra_images(db)
 
     body = ['<?xml version="1.0" encoding="UTF-8"?>']
     body.append('<rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">')
@@ -161,6 +162,11 @@ async def merchant_feed(db: AsyncSession = Depends(get_db)):
         body.append(f"<description>{description}</description>")
         body.append(f"<link>{escape(link)}</link>")
         body.append(f"<g:image_link>{escape(image_link)}</g:image_link>")
+        # Merchant Center's Store Quality "images per offer" metric counts
+        # these; Google accepts at most 10 additional_image_link per item.
+        for extra in [u for u in extra_images.get(r["code"], []) if u != image_url][:10]:
+            extra_link = extra if extra.startswith("http") else f"{base}{extra}"
+            body.append(f"<g:additional_image_link>{escape(extra_link)}</g:additional_image_link>")
         body.append(f"<g:availability>{availability}</g:availability>")
         body.append(f"<g:price>{price}</g:price>")
         body.append("<g:brand>SR Lux</g:brand>")

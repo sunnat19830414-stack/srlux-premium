@@ -171,6 +171,36 @@ async def get_model_cards(db: AsyncSession):
     return result.mappings().all()
 
 
+async def get_model_extra_images(db: AsyncSession) -> dict[str, list[str]]:
+    """
+    Every distinct photo (variant covers + gallery photos) per model card
+    code, keyed the same way as get_model_cards — used by the Merchant feed
+    for additional_image_link. JDC22-1200-400W is excluded for the same
+    reason as in get_model_cards: its attached photo shows the wrong product.
+    """
+    sql = text("""
+        SELECT code, url FROM (
+            SELECT COALESCE(p.parent_model, p.sku) AS code, x.url,
+                   MIN(p.sort_order) AS p_order, MIN(x.img_order) AS i_order
+            FROM products p
+            CROSS JOIN LATERAL (
+                SELECT p.image_url AS url, -1 AS img_order
+                UNION ALL
+                SELECT pi.image_url, pi.sort_order FROM product_images pi WHERE pi.product_id = p.id
+            ) x
+            WHERE p.is_active = true AND x.url IS NOT NULL
+              AND p.sku NOT IN ('JDC22-1200-400W')
+            GROUP BY 1, 2
+        ) t
+        ORDER BY code, p_order, i_order, url
+    """)
+    result = await db.execute(sql)
+    images: dict[str, list[str]] = {}
+    for code, url in result.all():
+        images.setdefault(code, []).append(url)
+    return images
+
+
 async def get_catalog_models(db: AsyncSession, category_scope: Optional[list[int]] = None):
     """
     Model list for the admin-only PDF catalog generator. Same grouping as
