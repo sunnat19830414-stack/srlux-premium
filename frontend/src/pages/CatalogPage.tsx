@@ -12,6 +12,20 @@ interface CatNode extends Category {
   children: CatNode[]
 }
 
+// Hand-written SEO copy (H1/title/description + body text) for the few
+// category pages targeted at specific search queries. Lives in
+// public/category-seo.json rather than in this bundle so the backend's
+// static-snapshot generator (erp_sync_dolibarr.generate_category_snapshots)
+// reads the exact same text from the web container — one source for both
+// what Googlebot's unrendered fetch sees and what the SPA renders.
+// Russian-only for now; Uzbek pages keep the generic category heading.
+interface CategorySeo {
+  h1: string
+  title: string
+  description: string
+  sections: { heading: string | null; text: string }[]
+}
+
 function buildTree(categories: Category[]): CatNode[] {
   const byId = new Map<number, CatNode>(categories.map((c) => [c.id, { ...c, children: [] }]))
   const roots: CatNode[] = []
@@ -162,17 +176,26 @@ export default function CatalogPage() {
       .finally(() => setLoading(false))
   }, [])
 
+  const [seoTexts, setSeoTexts] = useState<Record<string, CategorySeo>>({})
   useEffect(() => {
-    const label = currentCat ? (lang === 'uz' ? (currentCat.name_uz || currentCat.name_ru) : currentCat.name_ru) : null
+    fetch('/category-seo.json')
+      .then((r) => (r.ok ? r.json() : {}))
+      .then(setSeoTexts)
+      .catch(() => {})
+  }, [])
+  const catSeo = currentCat && lang === 'ru' ? seoTexts[currentCat.slug] : undefined
+  const catLabel = currentCat ? (lang === 'uz' ? (currentCat.name_uz || currentCat.name_ru) : currentCat.name_ru) : null
+
+  useEffect(() => {
     setSeo({
-      title: label ? `${label} — SR Lux` : 'SR Lux — Премиальные системы отопления и климат-контроля',
-      description: label ? `${label} — каталог SR Lux. ${t.heroSubtitle}` : t.heroSubtitle,
+      title: catSeo?.title ?? (catLabel ? `${catLabel} — SR Lux` : 'SR Lux — Премиальные системы отопления и климат-контроля'),
+      description: catSeo?.description ?? (catLabel ? `${catLabel} — каталог SR Lux. ${t.heroSubtitle}` : t.heroSubtitle),
       path: currentCat ? `/catalog/${currentCat.slug}` : '/catalog',
       image: '/public_assets/logo-horizontal.png',
       type: 'website',
       jsonLd: organizationJsonLd(),
     })
-  }, [lang, t.heroSubtitle, currentCat])
+  }, [lang, t.heroSubtitle, currentCat, catLabel, catSeo])
 
   const catTree = useMemo(() => buildTree(allCategories), [allCategories])
 
@@ -316,7 +339,7 @@ export default function CatalogPage() {
         </div>
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16 text-center">
           <h1 className="text-3xl sm:text-4xl font-extrabold text-white mb-3 leading-tight">
-            {t.catalogHeroTitle}
+            {catSeo?.h1 ?? catLabel ?? t.catalogHeroTitle}
           </h1>
           <p className="text-gray-400 text-base sm:text-lg max-w-2xl mx-auto">
             {t.catalogHeroSubtitle}
@@ -538,6 +561,17 @@ export default function CatalogPage() {
           </div>
         </div>
       </section>
+      )}
+
+      {catSeo && (
+        <section className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pb-16 pt-6 space-y-5">
+          {catSeo.sections.map((s, i) => (
+            <div key={i}>
+              {s.heading && <h2 className="text-lg font-bold text-white mb-2">{s.heading}</h2>}
+              <p className="text-gray-400 text-sm leading-7">{s.text}</p>
+            </div>
+          ))}
+        </section>
       )}
     </div>
   )

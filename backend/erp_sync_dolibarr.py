@@ -1199,6 +1199,18 @@ def generate_category_snapshots():
         logger.error(f"Не удалось получить список категорий для SEO-снапшотов: {e}")
         return
 
+    # Hand-written copy for query-targeted categories — the same
+    # public/category-seo.json the SPA's CatalogPage renders, fetched from
+    # the web container so the two can never drift apart. Optional: on any
+    # failure every category just keeps the generic title/description.
+    try:
+        r = requests.get(WEB_URL + "/category-seo.json", timeout=10)
+        r.raise_for_status()
+        seo_texts = r.json()
+    except Exception as e:
+        logger.warning(f"Не удалось получить category-seo.json с {WEB_URL}: {e}")
+        seo_texts = {}
+
     CATEGORY_SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     written = set()
 
@@ -1212,6 +1224,10 @@ def generate_category_snapshots():
                 f"{name} в каталоге SR Lux — купить в Ташкенте. "
                 "Официальный дистрибьютор систем отопления и климат-контроля в Узбекистане."
             )
+            seo = seo_texts.get(slug)
+            if seo:
+                title = seo["title"]
+                description = seo["description"]
 
             # Current URL — self-canonicalizing.
             html_new = _patch_head_html(
@@ -1222,6 +1238,17 @@ def generate_category_snapshots():
                 image=None,
                 jsonld=None,
             )
+            if seo:
+                # Pre-filled #root so the unrendered fetch sees the H1 and
+                # body text; ReactDOM.createRoot().render() replaces it on
+                # mount with the identical copy rendered by CatalogPage.
+                parts = [f"<h1>{html.escape(seo['h1'])}</h1>"]
+                for s in seo.get("sections", []):
+                    if s.get("heading"):
+                        parts.append(f"<h2>{html.escape(s['heading'])}</h2>")
+                    parts.append(f"<p>{html.escape(s['text'])}</p>")
+                body = "".join(parts)
+                html_new = html_new.replace('<div id="root"></div>', f'<div id="root">{body}</div>', 1)
             (CATEGORY_SNAPSHOT_DIR / f"{slug}.html").write_text(html_new, encoding="utf-8")
             written.add(f"{slug}.html")
 
