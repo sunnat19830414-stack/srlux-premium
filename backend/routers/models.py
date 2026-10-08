@@ -234,6 +234,7 @@ async def get_model(code: str, db: AsyncSession = Depends(get_db)):
     colors: set = set()
     sections_set: set = set()
     heights_set: set = set()
+    widths_set: set = set()
     conn_types_set: set = set()
     category_name: str | None = None
     category_name_uz: str | None = None
@@ -252,6 +253,8 @@ async def get_model(code: str, db: AsyncSession = Depends(get_db)):
             sections_set.add(p.sections)
         if p.height_mm:
             heights_set.add(p.height_mm)
+        if p.width_mm:
+            widths_set.add(p.width_mm)
         if p.connection_type:
             conn_types_set.add(p.connection_type)
         if p.category and not category_name:
@@ -276,6 +279,7 @@ async def get_model(code: str, db: AsyncSession = Depends(get_db)):
             color=p.color,
             sections=p.sections,
             height_mm=p.height_mm,
+            width_mm=p.width_mm,
             columns_count=p.columns_count,
             connection_type=p.connection_type,
             category_id=p.category_id,
@@ -307,6 +311,7 @@ async def get_model(code: str, db: AsyncSession = Depends(get_db)):
         colors=sorted(colors),
         sections_available=sorted(sections_set),
         height_mm_available=sorted(heights_set),
+        width_mm_available=sorted(widths_set),
         connection_types_available=sorted(conn_types_set),
         variants=variants,
     )

@@ -79,6 +79,7 @@ class ModelVariantOut(BaseModel):
     color: Optional[str]
     sections: Optional[int]
     height_mm: Optional[int]
+    width_mm: Optional[int] = None
     columns_count: Optional[int]
     connection_type: Optional[str] = None
     category_id: Optional[int] = None
@@ -129,6 +130,7 @@ class ModelDetailOut(BaseModel):
     colors: List[str]
     sections_available: List[int]
     height_mm_available: List[int]
+    width_mm_available: List[int] = []
     connection_types_available: List[str] = []
     variants: List[ModelVariantOut]
 

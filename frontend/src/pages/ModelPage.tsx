@@ -80,6 +80,7 @@ export default function ModelPage({ onAddToCart }: Props) {
   const [selectedColor, setSelectedColor]         = useState<string | null>(null)
   const [selectedSections, setSelectedSections]   = useState<number | null>(null)
   const [selectedHeight, setSelectedHeight]       = useState<number | null>(null)
+  const [selectedWidth, setSelectedWidth]         = useState<number | null>(null)
   const [customRalMode, setCustomRalMode] = useState(false)
   const [customRalNote, setCustomRalNote] = useState('')
   const [qty, setQty]     = useState(1)
@@ -105,6 +106,7 @@ export default function ModelPage({ onAddToCart }: Props) {
         // complaint).
         setSelectedColor(null)
         setSelectedHeight(null)
+        setSelectedWidth(null)
         setSelectedSections(null)
         setActivePhoto(0)
         setWithFan(false)
@@ -221,6 +223,25 @@ export default function ModelPage({ onAddToCart }: Props) {
     (heightsAvailable.length <= 1 || effectiveHeight != null) &&
     (colorsAvailable.length  <= 1 || effectiveColor  != null)
 
+  // Width is only a separate choice for models with no section count (e.g.
+  // JDC22 steel panels — 600…2000 мм at each height). Where sections exist
+  // (GZ2/GZ3 etc.) the width is fully determined by the section count, so
+  // showing both would just be two controls for the same decision.
+  const offersWidthChoice = model.sections_available.length === 0
+  const widthsAvailable = offersWidthChoice
+    ? model.width_mm_available.filter((w) =>
+        visibleVariants.some((v) => {
+          const colorOk  = !effectiveColor  || v.color === effectiveColor
+          const heightOk = !effectiveHeight || v.height_mm === effectiveHeight
+          return colorOk && heightOk && v.width_mm === w
+        }),
+      )
+    : []
+  const effectiveWidth =
+    selectedWidth != null && widthsAvailable.includes(selectedWidth)
+      ? selectedWidth
+      : (widthsAvailable.length === 1 ? widthsAvailable[0] : null)
+
   // Every dimension the model actually offers a choice for has been
   // settled. Required so that e.g. an untouched height selector (still
   // null) doesn't get treated as "no constraint" and match every variant
@@ -228,7 +249,9 @@ export default function ModelPage({ onAddToCart }: Props) {
   // price/stock for the whole model instead of prompting the customer to
   // finish choosing.
   const selectionComplete =
-    readyForSections && (sectionsAvailable.length <= 1 || effectiveSections != null)
+    readyForSections &&
+    (sectionsAvailable.length <= 1 || effectiveSections != null) &&
+    (widthsAvailable.length <= 1 || effectiveWidth != null)
 
   // All variants matching the current selection (connection type — top vs.
   // bottom — is deliberately not filtered on: SR Lux radiators accept
@@ -237,7 +260,8 @@ export default function ModelPage({ onAddToCart }: Props) {
     const colorOk    = !effectiveColor    || v.color    === effectiveColor
     const sectionsOk = !effectiveSections || v.sections === effectiveSections
     const heightOk   = !effectiveHeight   || v.height_mm === effectiveHeight
-    return colorOk && sectionsOk && heightOk
+    const widthOk    = !effectiveWidth    || v.width_mm  === effectiveWidth
+    return colorOk && sectionsOk && heightOk && widthOk
   })
   const resolvedCandidates = selectionComplete ? groupCandidates : []
 
@@ -463,6 +487,30 @@ export default function ModelPage({ onAddToCart }: Props) {
               </div>
             )}
 
+            {/* Width selector — appears once height and colour are settled */}
+            {readyForSections && widthsAvailable.length > 1 && (
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wider mb-3">
+                  {lang === 'uz' ? 'Kenglik' : 'Ширина'}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {widthsAvailable.map((w) => (
+                    <button
+                      key={w}
+                      onClick={() => setSelectedWidth(w)}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all ${
+                        effectiveWidth === w
+                          ? 'border-gold bg-gold/10 text-gold'
+                          : 'border-gray-700 text-gray-400 hover:border-gold/50'
+                      }`}
+                    >
+                      {w} мм
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Sections selector — appears only once height and colour (when
                 the model actually offers a choice for either) are settled */}
             {readyForSections && sectionsAvailable.length > 1 && (
@@ -527,6 +575,8 @@ export default function ModelPage({ onAddToCart }: Props) {
                   ? (lang === 'uz' ? "Avval balandlikni tanlang" : 'Сначала выберите высоту')
                   : colorsAvailable.length > 1 && effectiveColor == null
                   ? (lang === 'uz' ? 'Rangni tanlang' : 'Выберите цвет')
+                  : widthsAvailable.length > 1 && effectiveWidth == null
+                  ? (lang === 'uz' ? 'Kenglikni tanlang' : 'Выберите ширину')
                   : sectionsAvailable.length > 1 && effectiveSections == null
                   ? (lang === 'uz' ? `${sectionLabel}ni tanlang` : `Выберите: ${sectionLabel.toLowerCase()}`)
                   : (lang === 'uz' ? 'Bunday birikma mavjud emas' : 'Такой комбинации нет в наличии')}
@@ -613,7 +663,7 @@ export default function ModelPage({ onAddToCart }: Props) {
                 Only rendered when at least one field actually has data (e.g. the
                 Electric Radiator line has no height/sections/columns/weight recorded). */}
             {selectedVariant && (
-              selectedVariant.height_mm || selectedVariant.sections ||
+              selectedVariant.height_mm || selectedVariant.width_mm || selectedVariant.sections ||
               selectedVariant.columns_count || selectedVariant.weight != null ||
               selectedVariant.power_w_dt50 != null || selectedVariant.power_w_electric != null
             ) && (
@@ -664,6 +714,12 @@ export default function ModelPage({ onAddToCart }: Props) {
                     <>
                       <dt className="text-gray-500">{t.height}</dt>
                       <dd className="text-gray-300">{selectedVariant.height_mm} мм</dd>
+                    </>
+                  )}
+                  {offersWidthChoice && selectedVariant.width_mm && (
+                    <>
+                      <dt className="text-gray-500">{lang === 'uz' ? 'Kenglik' : 'Ширина'}</dt>
+                      <dd className="text-gray-300">{selectedVariant.width_mm} мм</dd>
                     </>
                   )}
                   {/* JDC22 — панельные радиаторы; у них нет "секций" в

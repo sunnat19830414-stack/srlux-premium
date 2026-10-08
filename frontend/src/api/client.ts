@@ -118,6 +118,7 @@ export interface ModelVariant {
   color: string | null
   sections: number | null
   height_mm: number | null
+  width_mm: number | null
   columns_count: number | null
   connection_type: string | null
   category_id: number | null
@@ -167,6 +168,7 @@ export interface ModelDetail {
   colors: string[]
   sections_available: number[]
   height_mm_available: number[]
+  width_mm_available: number[]
   connection_types_available: string[]
   variants: ModelVariant[]
 }
