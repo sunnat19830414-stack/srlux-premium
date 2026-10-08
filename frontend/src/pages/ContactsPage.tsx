@@ -16,6 +16,7 @@ export default function ContactsPage() {
 
   const PHONE_PRIMARY = '+998 95 185 47 97'
   const PHONE_SECONDARY = '+998 90 185 47 97'
+  const PHONE_TERTIARY = '+998 99 988 68 88'
   const ADDRESS = lang === 'uz' ? "«Stroy Mir» bozori, Usta Shirin ko'chasi, Toshkent, 100057" : 'Рынок «Строй мир», ул. Уста Ширин, Ташкент, 100057'
   const HOURS_WEEKDAY = lang === 'uz' ? 'Du–Shanba: 9:00–18:00' : 'Пн–Сб: 9:00–18:00'
   const HOURS_SUN = lang === 'uz' ? 'Yakshanba: dam olish kuni' : 'Вс: выходной'
@@ -64,9 +65,15 @@ export default function ContactsPage() {
               </a>
               <a
                 href={`tel:${PHONE_SECONDARY.replace(/\s/g, '')}`}
-                className="block text-xl font-medium text-gray-300 hover:text-gold transition-colors"
+                className="block text-xl font-medium text-gray-300 hover:text-gold transition-colors mb-2"
               >
                 {PHONE_SECONDARY}
+              </a>
+              <a
+                href={`tel:${PHONE_TERTIARY.replace(/\s/g, '')}`}
+                className="block text-xl font-medium text-gray-300 hover:text-gold transition-colors"
+              >
+                {PHONE_TERTIARY}
               </a>
               <p className="text-xs text-gray-500 mt-3">
                 {lang === 'uz' ? 'Ish vaqtida qo\'ng\'iroq qiling' : 'Звоните в рабочее время'}
@@ -162,23 +169,29 @@ export default function ContactsPage() {
               </ul>
             </div>
 
-            {/* Map placeholder */}
-            <div className="bg-anthracite-800 rounded-2xl border border-gold-700/10 overflow-hidden h-48 flex items-center justify-center">
-              <div className="text-center text-gray-600">
-                <MapPin size={32} className="mx-auto mb-2" />
-                <p className="text-sm">
+            {/* Shop entrance photo — links out to the map, same as the
+                placeholder it replaced */}
+            <a
+              href="https://maps.app.goo.gl/nicRLLHHctQxuEmi8"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group relative block bg-anthracite-800 rounded-2xl border border-gold-700/10 overflow-hidden h-48"
+            >
+              <img
+                src="/static/uploads/shop-entrance.jpg"
+                alt={lang === 'uz' ? "SR Lux do'koni kirish qismi" : 'Вход в магазин SR Lux'}
+                className="w-full h-full object-cover"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-anthracite-900/85 via-anthracite-900/10 to-transparent" />
+              <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between">
+                <p className="text-xs text-gray-200">
                   {lang === 'uz' ? "«Stroy Mir» bozori, Usta Shirin ko'chasi" : 'Рынок «Строй мир», ул. Уста Ширин'}
                 </p>
-                <a
-                  href="https://maps.app.goo.gl/nicRLLHHctQxuEmi8"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-gold hover:underline mt-1 inline-block"
-                >
+                <span className="text-xs text-gold font-medium group-hover:underline shrink-0 ml-2">
                   Google Maps →
-                </a>
+                </span>
               </div>
-            </div>
+            </a>
           </div>
         </div>
       </div>
