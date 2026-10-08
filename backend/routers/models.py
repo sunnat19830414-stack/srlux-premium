@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +11,15 @@ from models import Category
 from schemas import ModelCardOut, ModelDetailOut, ModelListOut, ModelVariantOut, RelatedModelsOut
 
 router = APIRouter(prefix="/api/models", tags=["models"])
+
+# Описание всей модели (линейки), написанное вручную: без него страница модели
+# показывает описание первого варианта (у JDC22 — один чёрный 1800×600).
+# Формат: {"<код модели>": {"ru": "...", "uz": "..."}}. Нет файла/кода — как раньше.
+_MODEL_DESCRIPTIONS_PATH = Path(__file__).resolve().parent.parent / "model_descriptions.json"
+try:
+    MODEL_DESCRIPTIONS: dict[str, dict[str, str]] = json.loads(_MODEL_DESCRIPTIONS_PATH.read_text(encoding="utf-8"))
+except FileNotFoundError:
+    MODEL_DESCRIPTIONS = {}
 
 # Чистые названия моделей для каталога (канонические ref из Dolibarr)
 MODEL_NAMES: dict[str, str] = {
@@ -249,6 +261,10 @@ async def get_model(code: str, db: AsyncSession = Depends(get_db)):
             description_ru = p.description_ru
         if p.description_uz and not description_uz:
             description_uz = p.description_uz
+
+    model_desc = MODEL_DESCRIPTIONS.get(code) or MODEL_DESCRIPTIONS.get(code.upper()) or {}
+    description_ru = model_desc.get("ru") or description_ru
+    description_uz = model_desc.get("uz") or description_uz
 
     variants = [
         ModelVariantOut(
