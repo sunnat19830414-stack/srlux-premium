@@ -192,6 +192,9 @@ export const adminGetOrder = (id: number) =>
 export const adminUpdateOrderStatus = (id: number, status: string) =>
   adminApi.patch<AdminOrder>(`/api/admin/orders/${id}/status`, { status })
 
+export const adminExportOrdersXlsx = (params: { status?: string; search?: string }) =>
+  adminApi.get('/api/admin/orders/export', { params, responseType: 'blob' })
+
 export const adminUploadProductImage = (id: number, file: File) => {
   const form = new FormData()
   form.append('file', file)

@@ -1,6 +1,7 @@
 import { ArrowLeft, Copy } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { fetchCurrencyRate } from '../../api/client'
 import type { AdminOrder } from '../../api/adminClient'
 import { adminGetOrder, adminUpdateOrderStatus } from '../../api/adminClient'
 import { useToast } from '../../contexts/ToastContext'
@@ -18,10 +19,16 @@ export default function AdminOrderDetail() {
   const { id } = useParams<{ id: string }>()
   const { toast } = useToast()
   const [order, setOrder] = useState<AdminOrder | null>(null)
+  const [usdRate, setUsdRate] = useState<number | null>(null)
+  const fmtUsd = (uzs: number) => usdRate ? `$${(uzs / usdRate).toFixed(2)}` : '—'
 
   useEffect(() => {
     if (id) adminGetOrder(Number(id)).then((r) => setOrder(r.data)).catch(() => toast('Заказ не найден', 'error'))
   }, [id])
+
+  useEffect(() => {
+    fetchCurrencyRate('USD').then((r) => setUsdRate(Number(r.data.rate_to_uzs))).catch(() => {})
+  }, [])
 
   const changeStatus = async (newStatus: string) => {
     if (!order) return
@@ -102,12 +109,18 @@ export default function AdminOrderDetail() {
               <p className="text-white text-sm">{item.product_name_snapshot}</p>
               <p className="text-gray-600 text-xs mt-0.5">× {item.quantity} шт. × {fmt(item.unit_price_snapshot)} сум</p>
             </div>
-            <p className="text-white font-semibold">{fmt(item.unit_price_snapshot * item.quantity)} сум</p>
+            <div className="text-right">
+              <p className="text-white font-semibold">{fmt(item.unit_price_snapshot * item.quantity)} сум</p>
+              <p className="text-gray-600 text-xs">{fmtUsd(item.unit_price_snapshot * item.quantity)}</p>
+            </div>
           </div>
         ))}
         <div className="flex items-center justify-between px-5 py-4">
           <span className="text-gray-400 font-medium">Итого</span>
-          <span className="text-amber-400 text-xl font-bold">{fmt(order.total_uzs)} сум</span>
+          <div className="text-right">
+            <span className="text-amber-400 text-xl font-bold block">{fmt(order.total_uzs)} сум</span>
+            <span className="text-gray-500 text-sm">{fmtUsd(order.total_uzs)}</span>
+          </div>
         </div>
       </div>
     </div>

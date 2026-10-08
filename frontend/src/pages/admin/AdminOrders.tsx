@@ -1,8 +1,9 @@
-import { Search } from 'lucide-react'
+import { Download, Loader2, Search } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { fetchCurrencyRate } from '../../api/client'
 import type { AdminOrder, AdminOrderList, OrderStatusCounts } from '../../api/adminClient'
-import { adminGetOrders, adminUpdateOrderStatus } from '../../api/adminClient'
+import { adminExportOrdersXlsx, adminGetOrders, adminUpdateOrderStatus } from '../../api/adminClient'
 import { useToast } from '../../contexts/ToastContext'
 
 const STATUSES: Array<{ value: string; label: string; color: string }> = [
@@ -36,7 +37,13 @@ export default function AdminOrders() {
   const [search, setSearch] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [usdRate, setUsdRate] = useState<number | null>(null)
+  const [exporting, setExporting] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    fetchCurrencyRate('USD').then((r) => setUsdRate(Number(r.data.rate_to_uzs))).catch(() => {})
+  }, [])
 
   const load = async () => {
     setLoading(true)
@@ -71,6 +78,27 @@ export default function AdminOrders() {
   }
 
   const totalPages = data ? Math.ceil(data.total / 20) : 1
+  const fmtUsd = (uzs: number) => usdRate ? `$${(uzs / usdRate).toFixed(2)}` : '—'
+
+  const exportXlsx = async () => {
+    setExporting(true)
+    try {
+      const r = await adminExportOrdersXlsx({ status: statusFilter || undefined, search: search || undefined })
+      const blob = new Blob([r.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `orders_${new Date().toISOString().slice(0, 10)}.xlsx`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch {
+      toast('Не удалось выгрузить Excel', 'error')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return (
     <div className="p-8">
@@ -105,6 +133,15 @@ export default function AdminOrders() {
               ✕ Сбросить
             </button>
           )}
+          <button
+            onClick={exportXlsx}
+            disabled={exporting}
+            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-black text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
+            title="Выгрузить текущий отфильтрованный список в Excel"
+          >
+            {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            Excel
+          </button>
         </div>
       </div>
 
@@ -162,7 +199,10 @@ export default function AdminOrders() {
                       <td className="px-4 py-3 font-mono text-amber-400 text-xs">{order.order_number}</td>
                       <td className="px-4 py-3 text-white">{order.customer_name}</td>
                       <td className="px-4 py-3 text-gray-300">{order.customer_phone}</td>
-                      <td className="px-4 py-3 text-right text-white whitespace-nowrap">{fmt(order.total_uzs)} сум</td>
+                      <td className="px-4 py-3 text-right text-white whitespace-nowrap">
+                        {fmt(order.total_uzs)} сум
+                        <span className="block text-xs text-gray-500">{fmtUsd(order.total_uzs)}</span>
+                      </td>
                       <td className="px-4 py-3">
                         <select
                           value={order.status}

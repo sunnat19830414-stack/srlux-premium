@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, UploadFile, File
+from fastapi.responses import Response
 from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -128,6 +129,28 @@ async def list_orders(
     from schemas import OrderStatusCounts
     total, orders, counts = await crud.admin_list_orders(db, page=page, limit=limit, status=status, search=search)
     return AdminOrderListOut(total=total, page=page, limit=limit, orders=orders, counts=OrderStatusCounts(**counts))
+
+
+@router.get("/orders/export", dependencies=[Depends(_require_api_key)])
+async def export_orders(
+    status: Optional[str] = Query(None),
+    search: Optional[str] = Query(None, max_length=200),
+    db: AsyncSession = Depends(get_db),
+):
+    from orders_export import build_orders_xlsx
+
+    # Same filters as the list view, just unpaginated (100k is comfortably
+    # above any realistic order count for this business — a real "everything
+    # matching this filter" export, not just the current page).
+    _total, orders, _counts = await crud.admin_list_orders(db, page=1, limit=100_000, status=status, search=search)
+    usd = await crud.get_currency(db, "USD")
+    xlsx_bytes = build_orders_xlsx(orders, usd.rate_to_uzs if usd else None)
+    filename = f"orders_{datetime.utcnow().strftime('%Y-%m-%d')}.xlsx"
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/orders/{order_id}", response_model=AdminOrderOut, dependencies=[Depends(_require_api_key)])
