@@ -1072,6 +1072,116 @@ def _patch_head_html(template: str, *, title: str, description: str, path: str,
     return out
 
 
+# ── Crawlable <body> content for model snapshots ─────────────────────────────
+#
+# A head-only snapshot leaves `<div id="root"></div>` empty, so Googlebot's
+# first (non-rendering) pass sees ~0 words, no H1 and no internal links — Search
+# Console showed most /model/ pages as "Обнаружена, не проиндексирована" with no
+# crawl at all (2026-10-08). The markup below goes *inside* #root: React mounts
+# with createRoot (not hydrateRoot), so it simply replaces it on load — no
+# hydration mismatch, and visitors only see it until the JS bundle runs. It
+# contains only facts the live ModelPage already shows (name, description,
+# variants, prices); stock is shown as "в наличии"/"под заказ", never a count.
+COLOR_RU = {
+    "white": "белый", "black": "чёрный", "anthracite": "антрацит", "chrome": "хром",
+    "gold": "золотой", "gray_silver": "серый / серебристый", "black_gold": "чёрный с золотом",
+}
+CONNECTION_RU = {"top": "верхнее", "bottom": "нижнее", "universal": "универсальное"}
+ROOT_PLACEHOLDER = '<div id="root"></div>'
+
+
+def _fmt_uzs(value) -> str:
+    return f"{int(round(float(value))):,}".replace(",", " ") + " сум"
+
+
+def _description_html(raw) -> str:
+    """Plain-text description -> <p>/<h2>/<ul>; "- key: value" lines become a list."""
+    out = []
+    for block in re.split(r"\n\s*\n", (raw or "").replace("\r", "").strip()):
+        lines = [ln.strip() for ln in block.split("\n") if ln.strip()]
+        if not lines:
+            continue
+        if lines[0].endswith(":") and len(lines) > 1:
+            out.append(f"<h2>{html.escape(lines[0].rstrip(':'))}</h2>")
+            lines = lines[1:]
+        if all(ln.startswith(("-", "•", "–")) for ln in lines):
+            items = "".join(f"<li>{html.escape(ln.lstrip('-•– ').strip())}</li>" for ln in lines)
+            out.append(f"<ul>{items}</ul>")
+        else:
+            out.append(f"<p>{html.escape(' '.join(lines))}</p>")
+    return "\n".join(out)
+
+
+def _variant_row_html(v: dict) -> str:
+    if v.get("height_mm") and v.get("width_mm"):
+        size = f"{v['height_mm']}×{v['width_mm']} мм"
+    elif v.get("width_mm"):
+        size = f"ширина {v['width_mm']} мм"
+    else:
+        size = ""
+    power = v.get("power_w_dt50") or v.get("power_w_electric") or v.get("power_w_fcu45")
+    cells = [
+        html.escape(v.get("sku") or ""),
+        html.escape(size),
+        html.escape(COLOR_RU.get(v.get("color") or "", "")),
+        f"{power} Вт" if power else "",
+        html.escape(CONNECTION_RU.get(v.get("connection_type") or "", "")),
+        _fmt_uzs(v["price_uzs"]) if float(v.get("price_uzs") or 0) > 0 else "по запросу",
+        "в наличии" if (v.get("stock") or 0) > 0 else "под заказ",
+    ]
+    return "<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>"
+
+
+def _render_model_body(m: dict, list_entry: dict | None, all_models: list, categories_by_id: dict) -> str:
+    code = m["code"]
+    name = m["name_ru"]
+    variants = m.get("variants") or []
+    cat = categories_by_id.get(list_entry.get("category_id")) if list_entry else None
+    prices = [float(v["price_uzs"]) for v in variants if float(v.get("price_uzs") or 0) > 0]
+    in_stock = any((v.get("stock") or 0) > 0 for v in variants)
+    image = variants[0].get("image_url") if variants else None
+
+    parts = ['<main class="seo-prerender" style="max-width:960px;margin:0 auto;padding:16px;'
+             'font-family:system-ui,sans-serif;line-height:1.5">']
+    crumbs = ['<a href="/">Главная</a>', '<a href="/catalog">Каталог</a>']
+    if cat:
+        crumbs.append(f'<a href="/catalog/{html.escape(cat["slug"])}">{html.escape(cat["name_ru"])}</a>')
+    parts.append(f'<nav aria-label="Навигация">{" › ".join(crumbs)}</nav>')
+    parts.append(f"<h1>{html.escape(name)}</h1>")
+    if m.get("name_uz"):
+        parts.append(f'<p lang="uz">{html.escape(m["name_uz"])}</p>')
+    if prices:
+        lo, hi = min(prices), max(prices)
+        price_txt = _fmt_uzs(lo) if lo == hi else f"от {_fmt_uzs(lo)} до {_fmt_uzs(hi)}"
+        parts.append(f"<p><strong>Цена: {price_txt}</strong> · {'В наличии в Ташкенте' if in_stock else 'Под заказ'}</p>")
+    if image:
+        parts.append(f'<img src="{html.escape(image)}" alt="{html.escape(name)}" loading="lazy" '
+                     f'style="max-width:320px;height:auto">')
+    parts.append(_description_html(m.get("description_ru")))
+
+    if len(variants) > 1:
+        head = "".join(f"<th>{h}</th>" for h in
+                       ("Артикул", "Размер (В×Ш)", "Цвет", "Мощность", "Подключение", "Цена", "Наличие"))
+        ordered = sorted(variants, key=lambda v: (v.get("height_mm") or 0, v.get("width_mm") or 0, v.get("color") or ""))
+        rows = "\n".join(_variant_row_html(v) for v in ordered)
+        parts.append(f"<h2>Варианты исполнения ({len(variants)})</h2>"
+                     f"<table><thead><tr>{head}</tr></thead><tbody>\n{rows}\n</tbody></table>")
+
+    if list_entry:
+        same = [x for x in all_models if x["code"] != code and x.get("category_id") == list_entry.get("category_id")]
+        same.sort(key=lambda x: -(x.get("total_stock") or 0))
+        if same:
+            links = "".join(f'<li><a href="/model/{html.escape(x["code"])}">{html.escape(x["name_ru"])}</a></li>'
+                            for x in same[:8])
+            title = f' «{html.escape(cat["name_ru"])}»' if cat else ""
+            parts.append(f"<h2>Другие товары в категории{title}</h2><ul>{links}</ul>")
+
+    parts.append('<p><a href="/delivery">Доставка по Ташкенту и Узбекистану</a> · '
+                 '<a href="/contacts">Контакты SR Lux</a> · <a href="/catalog">Весь каталог</a></p>')
+    parts.append("</main>")
+    return "\n".join(parts)
+
+
 def generate_model_snapshots():
     """Static-SEO snapshot for every /model/<code> page — see module docstring above."""
     template = _fetch_template()
@@ -1082,10 +1192,21 @@ def generate_model_snapshots():
     try:
         resp = requests.get(f"{BACKEND_URL}/api/models", timeout=15)
         resp.raise_for_status()
-        codes = [m["code"] for m in resp.json().get("models", [])]
+        all_models = resp.json().get("models", [])
+        codes = [m["code"] for m in all_models]
     except Exception as e:
         logger.error(f"Не удалось получить список моделей для SEO-снапшотов: {e}")
         return
+    models_by_code = {m["code"]: m for m in all_models}
+
+    # Categories only feed the breadcrumb link — snapshots are still written without them.
+    try:
+        r = requests.get(f"{BACKEND_URL}/api/categories", timeout=15)
+        r.raise_for_status()
+        categories_by_id = {c["id"]: c for c in r.json()}
+    except Exception as e:
+        logger.warning(f"Категории для SEO-снапшотов моделей не получены: {e}")
+        categories_by_id = {}
 
     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     written = set()
@@ -1138,6 +1259,11 @@ def generate_model_snapshots():
                 image=image,
                 jsonld=jsonld,
             )
+            try:
+                body = _render_model_body(m, models_by_code.get(code), all_models, categories_by_id)
+                html_out = html_out.replace(ROOT_PLACEHOLDER, f'<div id="root">{body}</div>', 1)
+            except Exception as e:
+                logger.warning(f"SEO-снапшот модели {code}: контент страницы не добавлен, только <head>: {e}")
             (SNAPSHOT_DIR / f"{code}.html").write_text(html_out, encoding="utf-8")
             written.add(f"{code}.html")
         except Exception as e:
