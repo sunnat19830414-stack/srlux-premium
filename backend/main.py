@@ -2,9 +2,12 @@
 SR Lux Premium — FastAPI backend
 """
 
+import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 
 from xml.sax.saxutils import escape
 
@@ -83,6 +86,7 @@ async def health():
 
 
 STATIC_SITEMAP_PATHS = ["", "about", "contacts", "delivery", "returns"]
+SITEMAP_LASTMOD_PATH = Path(os.getenv("SITEMAP_LASTMOD_PATH", "/app/uploads/sitemap-lastmod.json"))
 
 
 @app.api_route("/sitemap.xml", methods=["GET", "HEAD"], tags=["system"])
@@ -96,10 +100,19 @@ async def sitemap(db: AsyncSession = Depends(get_db)):
     categories = await crud.get_categories(db)
     urls += [f"{base}/catalog/{c.slug}" for c in categories]
 
+    # <lastmod> per path, maintained by erp_sync_dolibarr.py's snapshot
+    # generators (moves only when the page's stable content changes — see
+    # SITEMAP_LASTMOD_PATH there). Missing/broken file → no lastmod, as before.
+    try:
+        lastmod = json.loads(SITEMAP_LASTMOD_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        lastmod = {}
+
     body = ['<?xml version="1.0" encoding="UTF-8"?>']
     body.append('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">')
     for u in urls:
-        body.append(f"<url><loc>{u}</loc></url>")
+        d = (lastmod.get(u[len(base):]) or {}).get("d")
+        body.append(f"<url><loc>{u}</loc><lastmod>{d}</lastmod></url>" if d else f"<url><loc>{u}</loc></url>")
     body.append("</urlset>")
 
     return Response(content="\n".join(body), media_type="application/xml")

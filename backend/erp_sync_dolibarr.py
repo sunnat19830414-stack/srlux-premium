@@ -6,11 +6,13 @@ erp_sync_dolibarr.py — Синхронизация товаров из Dolibarr
 """
 
 import fcntl
+import hashlib
 import html
 import json
 import logging
 import os
 import sys
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -1182,6 +1184,137 @@ def _render_model_body(m: dict, list_entry: dict | None, all_models: list, categ
     return "\n".join(parts)
 
 
+# ── <lastmod> for sitemap.xml ────────────────────────────────────────────────
+#
+# main.py's /sitemap.xml reads this file. A page's date moves only when a hash
+# of its *stable* content changes (names, descriptions, specs, links) — not on
+# the daily USD→UZS price shift or stock changes, which touch almost every
+# product every day (products.updated_at is useless for this: 283 of 352 rows
+# were "updated" on 2026-10-08 alone). Google ignores lastmod that is always
+# "today". Format: {"<path>": {"h": "<hash>", "d": "YYYY-MM-DD"}}.
+SITEMAP_LASTMOD_PATH = Path(os.getenv("SITEMAP_LASTMOD_PATH", "/app/uploads/sitemap-lastmod.json"))
+
+
+def _load_lastmod() -> dict:
+    try:
+        return json.loads(SITEMAP_LASTMOD_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _touch_lastmod(state: dict, path: str, stable_content: str) -> None:
+    h = hashlib.sha256(stable_content.encode("utf-8")).hexdigest()[:16]
+    entry = state.get(path)
+    if not entry or entry.get("h") != h:
+        state[path] = {"h": h, "d": datetime.now(timezone.utc).strftime("%Y-%m-%d")}
+
+
+def _save_lastmod(state: dict) -> None:
+    try:
+        tmp = SITEMAP_LASTMOD_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        tmp.replace(SITEMAP_LASTMOD_PATH)
+    except Exception as e:
+        logger.warning(f"sitemap-lastmod.json не сохранён: {e}")
+
+
+def _model_stable_content(m: dict) -> str:
+    variants = sorted(
+        (v.get("sku"), v.get("name_ru"), v.get("height_mm"), v.get("width_mm"), v.get("color"),
+         v.get("connection_type"), v.get("sections"), v.get("power_w_dt50"), v.get("power_w_electric"),
+         v.get("image_url"))
+        for v in (m.get("variants") or [])
+    )
+    return json.dumps([m.get("name_ru"), m.get("name_uz"), m.get("description_ru"), m.get("description_uz"),
+                       m.get("category_name"), variants], ensure_ascii=False, default=str)
+
+
+# ── Crawlable <body> for category and home snapshots ─────────────────────────
+#
+# Same createRoot-replaces-#root reasoning as _render_model_body(). Goal: a
+# crawler following plain <a href> links reaches every category and every
+# model from the homepage (home → category → model), instead of discovering
+# /model/ pages only through sitemap.xml. Model links carry names only, no
+# prices, so the markup (and its lastmod hash) doesn't change every day.
+def _category_descendants(cat_id: int, categories: list) -> set:
+    found, frontier = {cat_id}, [cat_id]
+    while frontier:
+        parent = frontier.pop()
+        for c in categories:
+            if c.get("parent_id") == parent and c["id"] not in found:
+                found.add(c["id"])
+                frontier.append(c["id"])
+    return found
+
+
+def _category_tree_html(categories: list) -> str:
+    def name_key(c):
+        return (c.get("sort_order") or 0, c["name_ru"])
+
+    def level(parent_id, depth=0) -> str:
+        if depth > 5:  # guards against a parent_id cycle in category data
+            return ""
+        items = []
+        for c in sorted((c for c in categories if c.get("parent_id") == parent_id), key=name_key):
+            items.append(f'<li><a href="/catalog/{html.escape(c["slug"])}">{html.escape(c["name_ru"])}</a>'
+                         + level(c["id"], depth + 1) + "</li>")
+        return f"<ul>{''.join(items)}</ul>" if items else ""
+
+    return level(None)
+
+
+SITE_NAV_HTML = ('<p><a href="/catalog">Весь каталог</a> · <a href="/delivery">Доставка и оплата</a> · '
+                 '<a href="/returns">Возврат</a> · <a href="/about">О компании</a> · <a href="/contacts">Контакты</a></p>')
+
+
+def _render_category_body(cat: dict, seo: dict | None, categories: list, models: list) -> str:
+    by_id = {c["id"]: c for c in categories}
+    crumbs = ['<a href="/">Главная</a>', '<a href="/catalog">Каталог</a>']
+    parent = by_id.get(cat.get("parent_id"))
+    if parent:
+        crumbs.append(f'<a href="/catalog/{html.escape(parent["slug"])}">{html.escape(parent["name_ru"])}</a>')
+
+    parts = ['<main class="seo-prerender" style="max-width:960px;margin:0 auto;padding:16px;'
+             'font-family:system-ui,sans-serif;line-height:1.5">',
+             f'<nav aria-label="Навигация">{" › ".join(crumbs)}</nav>',
+             f"<h1>{html.escape(seo['h1'] if seo and seo.get('h1') else cat['name_ru'])}</h1>"]
+    for s in (seo or {}).get("sections", []):
+        if s.get("heading"):
+            parts.append(f"<h2>{html.escape(s['heading'])}</h2>")
+        parts.append(f"<p>{html.escape(s['text'])}</p>")
+
+    children = sorted((c for c in categories if c.get("parent_id") == cat["id"]),
+                      key=lambda c: (c.get("sort_order") or 0, c["name_ru"]))
+    if children:
+        links = "".join(f'<li><a href="/catalog/{html.escape(c["slug"])}">{html.escape(c["name_ru"])}</a></li>'
+                        for c in children)
+        parts.append(f"<h2>Разделы</h2><ul>{links}</ul>")
+
+    subtree = _category_descendants(cat["id"], categories)
+    in_cat = [m for m in models if subtree & set(m.get("category_ids") or [m.get("category_id")])]
+    if in_cat:
+        links = "".join(f'<li><a href="/model/{html.escape(m["code"])}">{html.escape(m["name_ru"])}</a></li>'
+                        for m in sorted(in_cat, key=lambda m: m["name_ru"]))
+        parts.append(f"<h2>Модели ({len(in_cat)})</h2><ul>{links}</ul>")
+
+    parts.append(SITE_NAV_HTML)
+    parts.append("</main>")
+    return "\n".join(parts)
+
+
+def _render_home_body(title: str, description: str, categories: list) -> str:
+    return "\n".join([
+        '<main class="seo-prerender" style="max-width:960px;margin:0 auto;padding:16px;'
+        'font-family:system-ui,sans-serif;line-height:1.5">',
+        f"<h1>{html.escape(title)}</h1>",
+        f"<p>{html.escape(description)}</p>",
+        "<h2>Каталог</h2>",
+        _category_tree_html(categories),
+        SITE_NAV_HTML,
+        "</main>",
+    ])
+
+
 def generate_model_snapshots():
     """Static-SEO snapshot for every /model/<code> page — see module docstring above."""
     template = _fetch_template()
@@ -1210,6 +1343,7 @@ def generate_model_snapshots():
 
     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     written = set()
+    lastmod = _load_lastmod()
 
     for code in codes:
         try:
@@ -1266,6 +1400,7 @@ def generate_model_snapshots():
                 logger.warning(f"SEO-снапшот модели {code}: контент страницы не добавлен, только <head>: {e}")
             (SNAPSHOT_DIR / f"{code}.html").write_text(html_out, encoding="utf-8")
             written.add(f"{code}.html")
+            _touch_lastmod(lastmod, f"/model/{code}", _model_stable_content(m))
         except Exception as e:
             logger.warning(f"SEO-снапшот для модели {code} не сгенерирован: {e}")
 
@@ -1288,6 +1423,7 @@ def generate_model_snapshots():
             f"{len(written)} из {len(codes)} моделей."
         )
 
+    _save_lastmod(lastmod)
     logger.info(f"SEO-снапшоты моделей: {len(written)} сгенерировано, {stale} устаревших удалено.")
 
 
@@ -1337,8 +1473,19 @@ def generate_category_snapshots():
         logger.warning(f"Не удалось получить category-seo.json с {WEB_URL}: {e}")
         seo_texts = {}
 
+    # Model list feeds the per-category model links; without it categories
+    # still get breadcrumbs, H1, copy and sub-category links.
+    try:
+        r = requests.get(f"{BACKEND_URL}/api/models", timeout=15)
+        r.raise_for_status()
+        models = r.json().get("models", [])
+    except Exception as e:
+        logger.warning(f"Список моделей для SEO-снапшотов категорий не получен: {e}")
+        models = []
+
     CATEGORY_SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     written = set()
+    lastmod = _load_lastmod()
 
     for cat in categories:
         try:
@@ -1364,19 +1511,15 @@ def generate_category_snapshots():
                 image=None,
                 jsonld=None,
             )
-            if seo:
-                # Pre-filled #root so the unrendered fetch sees the H1 and
-                # body text; ReactDOM.createRoot().render() replaces it on
-                # mount with the identical copy rendered by CatalogPage.
-                parts = [f"<h1>{html.escape(seo['h1'])}</h1>"]
-                for s in seo.get("sections", []):
-                    if s.get("heading"):
-                        parts.append(f"<h2>{html.escape(s['heading'])}</h2>")
-                    parts.append(f"<p>{html.escape(s['text'])}</p>")
-                body = "".join(parts)
-                html_new = html_new.replace('<div id="root"></div>', f'<div id="root">{body}</div>', 1)
+            # Pre-filled #root so the unrendered fetch sees the H1, copy (the
+            # same category-seo.json text CatalogPage renders) and links to
+            # sub-categories and models; ReactDOM.createRoot().render()
+            # replaces it on mount.
+            body = _render_category_body(cat, seo, categories, models)
+            html_new = html_new.replace(ROOT_PLACEHOLDER, f'<div id="root">{body}</div>', 1)
             (CATEGORY_SNAPSHOT_DIR / f"{slug}.html").write_text(html_new, encoding="utf-8")
             written.add(f"{slug}.html")
+            _touch_lastmod(lastmod, f"/catalog/{slug}", title + description + body)
 
             # Legacy query-string URL — canonicalizes to the current one.
             html_legacy = _patch_head_html(
@@ -1407,6 +1550,7 @@ def generate_category_snapshots():
             f"{len(written)} из {len(categories)}."
         )
 
+    _save_lastmod(lastmod)
     logger.info(f"SEO-снапшоты категорий: {len(written)} сгенерировано, {stale} устаревших удалено.")
 
 
@@ -1478,6 +1622,16 @@ def generate_static_snapshots():
         },
     ]
 
+    # Categories feed the homepage's catalog links (home → category → model).
+    try:
+        r = requests.get(f"{BACKEND_URL}/api/categories", timeout=15)
+        r.raise_for_status()
+        categories = r.json()
+    except Exception as e:
+        logger.warning(f"Категории для SEO-снапшота главной не получены: {e}")
+        categories = []
+
+    lastmod = _load_lastmod()
     for page in pages:
         try:
             html_out = _patch_head_html(
@@ -1488,9 +1642,15 @@ def generate_static_snapshots():
                 image=page["image"],
                 jsonld=page["jsonld"],
             )
+            body = ""
+            if page["path"] == "/" and categories:
+                body = _render_home_body(page["title"], page["description"], categories)
+                html_out = html_out.replace(ROOT_PLACEHOLDER, f'<div id="root">{body}</div>', 1)
             (STATIC_SNAPSHOT_DIR / page["file"]).write_text(html_out, encoding="utf-8")
+            _touch_lastmod(lastmod, page["path"], page["title"] + page["description"] + body)
         except Exception as e:
             logger.warning(f"SEO-снапшот для {page['path']} не сгенерирован: {e}")
+    _save_lastmod(lastmod)
 
     logger.info(f"SEO-снапшоты статических страниц: {len(pages)} сгенерировано.")
 
