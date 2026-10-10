@@ -270,8 +270,12 @@ def extract_price(p: dict) -> float:
     Dolibarr может хранить цену в базовом поле (price_ttc/price) ИЛИ
     в мультипрайсе (multiprices_ttc, multiprices) при включённом режиме уровней цен.
     """
-    # 1. Стандартные поля
-    for field in ("price_ttc", "price"):
+    # 1. Стандартные поля. `price` first: SR Lux has no VAT, and custom Dolibarr
+    # modules (kasir, supplierpayment, reports/analytics warehouse tab) used to
+    # update only `price`, leaving `price_ttc` stale — the site then showed old
+    # prices (2026-10-10: JDC22-600-800 77.50 instead of 112, NCR03_600-8
+    # 132.71 instead of 705.88). `price_ttc` is only a fallback now.
+    for field in ("price", "price_ttc"):
         val = p.get(field)
         try:
             if val and float(val) > 0:
